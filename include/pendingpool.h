@@ -9,5 +9,4 @@ public:
     virtual unsigned int get_select_timeout() = 0;
     virtual void log(char * fmt, ...) = 0;
 
-
 };
