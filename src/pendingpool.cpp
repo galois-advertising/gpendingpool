@@ -1,6 +1,7 @@
 #include <stdarg.h>
 #include "pendingpool.h"
 #include <iostream>
+#include <unistd.h>
 
 
 namespace galois
@@ -17,7 +18,7 @@ unsigned int pendingpool::get_select_timeout() const
 {
     return 1000;
 }
-void pendingpool::log(const char * fmt, ...) const
+void pendingpool::log(LOGLEVEL level, const char * fmt, ...) const
 {
     char buf[1024];
     va_list args; 
@@ -37,16 +38,46 @@ pendingpool::~pendingpool()
 
 }
 
+int pendingpool::select_wrap(int nfds, fd_set * readfds, fd_set * writefds, fd_set * exceptfds,
+          timeval *timeout)
+{
+    int val;
+again:
+    val = select(nfds, readfds, writefds, exceptfds, timeout);
+    if (val < 0) {
+        if (errno == EINTR) {
+            if (timeout != NULL) {
+            }
+            goto again;
+        }
+        log(LOGLEVEL::WARNING, "select() call error.error[%d] info is %s", errno,
+                    strerror(errno));
+    }
+    if (val == 0) {
+        errno = ETIMEDOUT;
+    }
+    return val;
+}
+
+void pendingpool::listen_thread()
+{
+
+    while(!_is_exit) {
+
+
+    }
+}
+
 bool pendingpool::start()
 {
-    log("start");
+    log(LOGLEVEL::DEBUG, "start");
     return true;
 
 }
 
 bool pendingpool::stop()
 {
-    log("stop");
+    log(LOGLEVEL::DEBUG, "stop");
     return true;
 }
 }
