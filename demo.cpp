@@ -3,7 +3,7 @@
 
 int main()
 {
-    galois::pendingpool::pendingpool pdp;
+    galois::pendingpool pdp;
     pdp.start();
 
     return 0;

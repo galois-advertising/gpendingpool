@@ -21,4 +21,5 @@ include_directories("${PROJECT_SOURCE_DIR}/")
 
 add_executable(pendingpool_demo 
 "${PROJECT_SOURCE_DIR}/src/pendingpool.cpp" 
+"${PROJECT_SOURCE_DIR}/demo.cpp" 
 )

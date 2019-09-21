@@ -1,22 +1,23 @@
 #include <stdarg.h>
 #include "pendingpool.h"
+#include <iostream>
 
 
-namespace galois::pendingpool
+namespace galois
 {
-unsigned int pendingpool::get_listen_port()
+unsigned int pendingpool::get_listen_port() const
 {
     return 8707;
 }
-unsigned int pendingpool::get_alive_timeout()
+unsigned int pendingpool::get_alive_timeout() const
 {
     return 1000;
 }
-unsigned int pendingpool::get_select_timeout()
+unsigned int pendingpool::get_select_timeout() const
 {
     return 1000;
 }
-void pendingpool::log(char * fmt, ...)
+void pendingpool::log(const char * fmt, ...) const
 {
     char buf[1024];
     va_list args; 
@@ -26,6 +27,15 @@ void pendingpool::log(char * fmt, ...)
     std::cerr<<buf<<std::endl;
 }
 
+pendingpool::pendingpool()
+{
+
+}
+
+pendingpool::~pendingpool()
+{
+
+}
 
 bool pendingpool::start()
 {
