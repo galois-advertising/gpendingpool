@@ -41,29 +41,29 @@ private:
     //
 private:
     // Get a READY socket and mark it to BUSY. (out,out,out)
-	bool work_fetch_item(int &handle, int &sock, int &wait);
+    bool work_fetch_item(int &handle, int &sock, int &wait);
     // Close handle.(Just set to BUSY if bKeepAlive)
-	void work_reset_item(int handle, bool bKeepAlive); 
+    void work_reset_item(int handle, bool bKeepAlive); 
     // Add the fds which are READY to fd_set 
-	int mask(fd_set * pfs);
+    int mask(fd_set * pfs);
     // Insert a accept fd 
-	int insert_item(int sock_work); 
+    int insert_item(int sock_work); 
     // Check all sockets.Only update the active time for socket which are BUSY, 
-	// or add to ready queue if the socket is READY and has been set.
-	void check_item(fd_set * pfs);
+    // or add to ready queue if the socket is READY and has been set.
+    void check_item(fd_set * pfs);
     // Insert the socket into readyqueue
-	int queue_in(int offset);
-	void set_timeout(int sec);	
+    int queue_in(int offset);
+    void set_timeout(int sec);    
     // Set length of readyqueue.
-	// Be careful: this function must be called before other function. 
-	// And you cannnot set it dynamicily.
-	void set_queuelen(int len);	
+    // Be careful: this function must be called before other function. 
+    // And you cannnot set it dynamicily.
+    void set_queuelen(int len);    
     // Set length of socknum.
-	// Be careful: this function must be called before other function. 
-	// And you cannnot set it dynamicily.
-	void set_socknum(int num);	
-	int get_freethread();	
-	int get_queuelen();
+    // Be careful: this function must be called before other function. 
+    // And you cannnot set it dynamicily.
+    void set_socknum(int num);    
+    int get_freethread();    
+    int get_queuelen();
 private:
     void listen_thread_process();
     const char * get_ip(int fd, char* ipstr, size_t len);
