@@ -47,51 +47,26 @@ private:
     {
         enum {READY, BUSY} status;
         int socket;
-        chrono::system_clock::time_point last_active;
-        chrono::system_clock::time_point enter_queue_time;
+        std::chrono::system_clock::time_point last_active;
+        std::chrono::system_clock::time_point enter_queue_time;
         fd_item(decltype(status) _status, int _socket) : 
             status(_status), socket(_socket), 
-            last_active(chrono::system_clock::now()), enter_queue_time() {}
+            last_active(std::chrono::system_clock::now()), enter_queue_time() {}
     };
     std::map<int, fd_item> fd_items;
     // Insert the socket into readyqueue
     bool ready_queue_push(int socket);
     // Get a READY socket and mark it to BUSY. (out,out,out)
-<<<<<<< HEAD
     std::optional<std::pair<int, std::chrono::duration>> ready_queue_pop();
     // Close handle.(Just set to BUSY if bKeepAlive)
     bool reset_item(int socket, bool bKeepAlive);
     // Add the fds which are READY to fd_set 
     int mask_item(fd_set & pfs);
-=======
-    bool work_fetch_item(int &handle, int &sock, int &wait);
-    // Close handle.(Just set to BUSY if bKeepAlive)
-    void work_reset_item(int handle, bool bKeepAlive); 
-    // Add the fds which are READY to fd_set 
-    int mask(fd_set * pfs);
->>>>>>> 2847ad0308c6eb1f8fe39b82e749d1295e45c6c3
-    // Insert a accept fd 
+  // Insert a accept fd 
     int insert_item(int sock_work); 
     // Check all sockets.Only update the active time for socket which are BUSY, 
     // or add to ready queue if the socket is READY and has been set.
-<<<<<<< HEAD
     void check_item(fd_set & pfs);
-=======
-    void check_item(fd_set * pfs);
-    // Insert the socket into readyqueue
-    int queue_in(int offset);
-    void set_timeout(int sec);    
-    // Set length of readyqueue.
-    // Be careful: this function must be called before other function. 
-    // And you cannnot set it dynamicily.
-    void set_queuelen(int len);    
-    // Set length of socknum.
-    // Be careful: this function must be called before other function. 
-    // And you cannnot set it dynamicily.
-    void set_socknum(int num);    
-    int get_freethread();    
-    int get_queuelen();
->>>>>>> 2847ad0308c6eb1f8fe39b82e749d1295e45c6c3
 private:
     void listen_thread_process();
     const char * get_ip(int fd, char* ipstr, size_t len);
