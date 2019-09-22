@@ -3,31 +3,31 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include "pendingpool.h"
+#include "gpendingpool.h"
 
 
 namespace galois
 {
-unsigned int pendingpool::get_listen_port() const
+unsigned int gpendingpool::get_listen_port() const
 {
     return 8707;
 }
 
-unsigned int pendingpool::get_queue_len() const
+unsigned int gpendingpool::get_queue_len() const
 {
     return 5;
 }
 
-int pendingpool::get_alive_timeout_ms() const
+int gpendingpool::get_alive_timeout_ms() const
 {
     return 1024;
 }
-int pendingpool::get_select_timeout_ms() const
+int gpendingpool::get_select_timeout_ms() const
 {
     return 1024;
 }
 
-void pendingpool::log(LOGLEVEL level, const char * fmt, ...) const
+void gpendingpool::log(LOGLEVEL level, const char * fmt, ...) const
 {
     char buf[1024];
     va_list args; 
@@ -37,22 +37,22 @@ void pendingpool::log(LOGLEVEL level, const char * fmt, ...) const
     std::cerr<<buf<<std::endl;
 }
 
-pendingpool::pendingpool() : listen_fd(-1), is_exit(false), listen_thread()
+gpendingpool::gpendingpool() : listen_fd(-1), is_exit(false), listen_thread()
 {
 
 }
 
-pendingpool::~pendingpool()
+gpendingpool::~gpendingpool()
 {
 
 }
 
-int pendingpool::close_wrap(int fd)
+int gpendingpool::close_wrap(int fd)
 {
     return close(fd);
 }
 
-int pendingpool::listen_wrap(int sockfd, int backlog)
+int gpendingpool::listen_wrap(int sockfd, int backlog)
 {
     int val = listen(sockfd, backlog);
     if (val == -1) {
@@ -62,7 +62,7 @@ int pendingpool::listen_wrap(int sockfd, int backlog)
     return val;
 }
 
-int pendingpool::setsockopt_wrap(int sockfd, int level, int optname, 
+int gpendingpool::setsockopt_wrap(int sockfd, int level, int optname, 
     const void *optval, socklen_t optlen)
 {
     int val = setsockopt(sockfd, level, optname, optval, optlen);
@@ -73,7 +73,7 @@ int pendingpool::setsockopt_wrap(int sockfd, int level, int optname,
     return val;
 }
 
-int pendingpool::socket_wrap(int family, int type, int protocol)
+int gpendingpool::socket_wrap(int family, int type, int protocol)
 {
     int val = socket(family, type, protocol);
     if (val == -1) {
@@ -83,7 +83,7 @@ int pendingpool::socket_wrap(int family, int type, int protocol)
     return val;
 }
 
-int pendingpool::bind_wrap(int sockfd, const struct sockaddr *myaddr, socklen_t addrlen)
+int gpendingpool::bind_wrap(int sockfd, const struct sockaddr *myaddr, socklen_t addrlen)
 {
     int val = bind(sockfd, myaddr, addrlen);
     if (val == -1) {
@@ -96,7 +96,7 @@ int pendingpool::bind_wrap(int sockfd, const struct sockaddr *myaddr, socklen_t 
     return val;
 }
 
-int pendingpool::tcplisten_wrap(int port, int queue)
+int gpendingpool::tcplisten_wrap(int port, int queue)
 {
     int listenfd;
     const int on = 1;
@@ -124,26 +124,26 @@ int pendingpool::tcplisten_wrap(int port, int queue)
     return listenfd;
 }
 
-int pendingpool::select_wrap(int nfds, fd_set * readfds, fd_set * writefds, fd_set * exceptfds, 
+int gpendingpool::select_wrap(int nfds, fd_set * readfds, fd_set * writefds, fd_set * exceptfds, 
     struct timeval * timeout)
 {
     int val;
 again:
     val = select(nfds, readfds, writefds, exceptfds, timeout);
     if (val < 0) {
-    	if (errno == EINTR) {
-    		goto again;
-    	}
-    	log(LOGLEVEL::FATAL, "select() call error.error[%d] info is %s", errno,
-    				strerror(errno));
+        if (errno == EINTR) {
+            goto again;
+        }
+        log(LOGLEVEL::FATAL, "select() call error.error[%d] info is %s", errno,
+                    strerror(errno));
     }
     if (val == 0) {
-    	errno = ETIMEDOUT;
+        errno = ETIMEDOUT;
     }
     return val;
 }
 
-int pendingpool::accept_wrap(int sockfd, struct sockaddr *sa, socklen_t * addrlen)
+int gpendingpool::accept_wrap(int sockfd, struct sockaddr *sa, socklen_t * addrlen)
 {
     int connfd = 0;
 again:
@@ -164,13 +164,48 @@ again:
     return connfd;
 }
 
-void pendingpool::close_listen_fd()
+void gpendingpool::close_listen_fd()
 {
     close_wrap(listen_fd);
     listen_fd = -1;
 }
 
-void pendingpool::listen_thread_process()
+int gpendingpool::getpeername_wrap(int sockfd, struct sockaddr *peeraddr, socklen_t * addrlen)
+{
+    int val = getpeername(sockfd, peeraddr, addrlen);
+    if (val == -1) {
+        log(LOGLEVEL::FATAL, "getpeername(%d) call failed.error[%d] info is %s.\n",
+            sockfd, errno, strerror(errno));
+    }
+    return val;
+}
+
+const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len)
+{
+    if (INET_ADDRSTRLEN > len) {
+        return "";
+    }
+    in_addr in;
+    sockaddr_in addr;
+    socklen_t addr_len = sizeof(sockaddr_in);
+    int ret;
+    ret = ul_getpeername(fd, (sockaddr*)&addr, &addr_len);
+    if (ret < 0) {
+        log(LOGLEVEL::FATAL, "getpeername failed, errno=%m");
+        return "";
+    }
+    in.s_addr = addr.sin_addr.s_addr;
+    if (inet_ntop(AF_INET, &in, ipstr, INET_ADDRSTRLEN) != NULL) {
+        //在ipstr末尾加0，保证字符串打印等
+        ipstr[INET_ADDRSTRLEN - 1] = 0;
+        return ipstr;
+    } else {
+        log(LOGLEVEL::FATAL, "get ip failed, errno=%m");
+        return "";
+    }
+}
+
+void gpendingpool::listen_thread_process()
 {
 
     fd_set fdset;
@@ -179,10 +214,34 @@ void pendingpool::listen_thread_process()
         get_select_timeout_ms() * 1000 % 1000000
     };
     int max_fd = 0;
+    int on = 1;
+    sockaddr saddr;
+    socklen_t addr_len = sizeof(struct sockaddr);
+    int accept_fd = -1;
     while(!is_exit) {
         FD_ZERO(&fdset);
         if (select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout) > 0) {
             if (listen_fd != -1 && FD_ISSET(listen_fd, &fdset)) {
+                char ipstr[INET_ADDRSTRLEN];
+                if ((accept_fd = accept_wrap(listen_fd, &saddr, &addr_len)) > 0) {
+                    if (setsockopt(accept_fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(int)) != 0
+                        ||
+                        setsockopt(accept_fd, IPPROTO_TCP, TCP_QUICKACK, &on, sizeof(int)) != 0) {
+                        log(LOGLEVEL::FATAL, "set socket option error");
+                    }
+                    char * ip_address = get_ip(accept_fd, ipstr, INET_ADDRSTRLEN);
+                    if (_pendpool->insert_item(accept_fd) == -1) {
+                        log(LOGLEVEL::FATAL, "UI connect overflow! ip=%s.sock num=%d",
+                            ip_address, com_pending->_socket_num);
+                        close_wrap(accept_fd);
+                    } else {
+                        log(LOGLEVEL::NOTICE, "accept connect from %s,queue len:%d.",
+                            ip_address, _pendpool->get_queuelen());
+                    }
+                } else {
+                    log(LOGLEVEL::WARNING, "accept request from UI error! ret=%d", accept_fd);
+                    continue;
+                }
             }
         }
 
@@ -190,7 +249,7 @@ void pendingpool::listen_thread_process()
     }
 }
 
-bool pendingpool::start()
+bool gpendingpool::start()
 {
     log(LOGLEVEL::DEBUG, "start");
     if (is_exit) {
@@ -211,7 +270,7 @@ bool pendingpool::start()
 
 }
 
-bool pendingpool::stop()
+bool gpendingpool::stop()
 {
     log(LOGLEVEL::DEBUG, "stop");
     is_exit = true;

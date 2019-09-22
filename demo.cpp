@@ -1,11 +1,11 @@
 #include <iostream>
-#include "pendingpool.h"
+#include "gpendingpool.h"
 #include <thread>
 
 
 int main()
 {
-    galois::pendingpool pdp;
+    galois::gpendingpool pdp;
     pdp.start();
     std::this_thread::sleep_for(std::chrono::seconds(10));
     pdp.stop();

@@ -1,4 +1,4 @@
-project(pendingpool_demo)
+project(gpendingpool_demo)
 cmake_minimum_required(VERSION 2.8)
 set (Tutorial_VERSION_MAJOR 1)
 set (Tutorial_VERSION_MINOR 0)
@@ -19,7 +19,7 @@ set(CMAKE_BUILD_TYPE "Release")
 include_directories("${PROJECT_SOURCE_DIR}/include")
 include_directories("${PROJECT_SOURCE_DIR}/")
 
-add_executable(pendingpool_demo 
-"${PROJECT_SOURCE_DIR}/src/pendingpool.cpp" 
+add_executable(gpendingpool_demo 
+"${PROJECT_SOURCE_DIR}/src/gpendingpool.cpp" 
 "${PROJECT_SOURCE_DIR}/demo.cpp" 
 )
