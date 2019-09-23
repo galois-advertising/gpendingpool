@@ -10,6 +10,11 @@ set (VERSION_MINOR 0)
 else()
 endif()
 
+add_definitions(-D_DEBUG_LOG_)
+add_definitions(-D_NOTICE_LOG_)
+add_definitions(-D_WARNING_LOG_)
+add_definitions(-D_FATAL_LOG_)
+
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 set(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g -ggdb -std=c++2a -fno-strict-aliasing -Wno-register")

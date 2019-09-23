@@ -14,11 +14,12 @@
 namespace galois
 {
 
-enum class LOGLEVEL {FATAL, WARNING, NOTICE, DEBUG};
 
+enum LOGLEVEL {FATAL, WARNING, NOTICE, DEBUG};
 class gpendingpool
 {
 public: 
+    typedef int socket_t;
     gpendingpool();
     ~gpendingpool();
     bool start();
@@ -60,29 +61,22 @@ private:
             return *this;
         }
     };
-    std::map<int, fd_item> fd_items;
-    // Insert the socket into readyqueue
-    bool ready_queue_push(int socket);
-    // Get a READY socket and mark it to BUSY. (out,out,out)
-    std::optional<std::pair<int, unsigned int> > ready_queue_pop();
-    // Close handle.(Just set to BUSY if bKeepAlive)
-    bool reset_item(int socket, bool bKeepAlive);
-    // Add the fds which are READY to fd_set 
+    std::map<socket_t, fd_item> fd_items;
+    bool ready_queue_push(socket_t socket);
+    std::optional<std::pair<socket_t, unsigned int> > ready_queue_pop();
+    bool reset_item(socket_t socket, bool bKeepAlive);
     int mask_item(fd_set & pfs);
-  // Insert a accept fd 
-    bool insert_item(int sock_work); 
-    // Check all sockets.Only update the active time for socket which are BUSY, 
-    // or add to ready queue if the socket is READY and has been set.
+    bool insert_item(socket_t socket); 
     void check_item(fd_set & pfs);
 private:
     void listen_thread_process();
-    const char * get_ip(int fd, char* ipstr, size_t len);
+    const char * get_ip(socket_t fd, char* ipstr, size_t len);
     int listen_fd;
     std::atomic_bool is_exit;
     std::thread listen_thread; 
     std::mutex mtx;
     std::condition_variable cond_var;
-    std::queue<int> ready_queue;
+    std::queue<socket_t> ready_queue;
 };
 
 }

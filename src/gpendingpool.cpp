@@ -1,13 +1,37 @@
-#include <stdarg.h>
 #include <iostream>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include "gpendingpool.h"
 #include <algorithm>
 #include <optional>
+#include <stdarg.h>
+#include <unistd.h>
+#include <sys/socket.h>
 #include <arpa/inet.h>  
+#include <netinet/in.h>
 #include <netinet/tcp.h>
+#include "gpendingpool.h"
+
+#ifdef _DEBUG_LOG_
+#define BEBUG_LOG(fmt, ...) this->log(DEBUG, "["__FILE__"]["__LINE__"][DEBUG]"##fmt, __VA_ARGS__);
+#else
+#define BEBUG_LOG(fmt, ...)
+#endif
+
+#ifdef _NOTICE_LOG_
+#define NOTICE_LOG(fmt, ...) this->log(DEBUG, "["__FILE__"]["__LINE__"][DEBUG]"##fmt, __VA_ARGS__);
+#else
+#define NOTICE_LOG(fmt, ...)
+#endif
+
+#ifdef _WARNING_LOG_
+#define WARNING_LOG(fmt, ...) this->log(DEBUG, "["__FILE__"]["__LINE__"][DEBUG]"##fmt, __VA_ARGS__);
+#else
+#define WARNING_LOG(fmt, ...)
+#endif
+
+#ifdef _FATAL_LOG_
+#define FATAL_LOG(fmt, ...) this->log(DEBUG, "["__FILE__"]["__LINE__"][DEBUG]"##fmt, __VA_ARGS__);
+#else
+#define FATAL_LOG(fmt, ...)
+#endif
 
 namespace galois
 {
@@ -60,7 +84,7 @@ int gpendingpool::listen_wrap(int sockfd, int backlog)
 {
     int val = listen(sockfd, backlog);
     if (val == -1) {
-        log(LOGLEVEL::FATAL, "listen(%d,%d) call failed.error[%d] info is %s.", sockfd,
+        FATAL_LOG("listen(%d,%d) call failed.error[%d] info is %s.", sockfd,
                     backlog, errno, strerror(errno));
     }
     return val;
@@ -71,7 +95,7 @@ int gpendingpool::setsockopt_wrap(int sockfd, int level, int optname,
 {
     int val = setsockopt(sockfd, level, optname, optval, optlen);
     if (val == -1) {
-        log(LOGLEVEL::FATAL, "setsockopt(%d,%d,%d) call failed.error[%d] info is %s.",
+        FATAL_LOG("setsockopt(%d,%d,%d) call failed.error[%d] info is %s.",
                     sockfd, level, optname, errno, strerror(errno));
     }
     return val;
@@ -81,7 +105,7 @@ int gpendingpool::socket_wrap(int family, int type, int protocol)
 {
     int val = socket(family, type, protocol);
     if (val == -1) {
-        log(LOGLEVEL::FATAL, "socket(%d,%d,%d) call failed.error[%d] info is %s.",
+        FATAL_LOG("socket(%d,%d,%d) call failed.error[%d] info is %s.",
                     family, type, protocol, errno, strerror(errno));
     }
     return val;
@@ -91,7 +115,7 @@ int gpendingpool::bind_wrap(int sockfd, const struct sockaddr *myaddr, socklen_t
 {
     int val = bind(sockfd, myaddr, addrlen);
     if (val == -1) {
-        log(LOGLEVEL::FATAL, "bind(%d,<%d,%d,%u>,%d) call failed.error[%d] info is %s.",
+        FATAL_LOG("bind(%d,<%d,%d,%u>,%d) call failed.error[%d] info is %s.",
             sockfd, ((struct sockaddr_in *) myaddr)->sin_family,
             ((struct sockaddr_in *) myaddr)->sin_port,
             ((struct sockaddr_in *) myaddr)->sin_addr.s_addr, addrlen, errno,
@@ -138,7 +162,7 @@ again:
         if (errno == EINTR) {
             goto again;
         }
-        log(LOGLEVEL::FATAL, "select() call error.error[%d] info is %s", errno,
+        FATAL_LOG("select() call error.error[%d] info is %s", errno,
                     strerror(errno));
     }
     if (val == 0) {
@@ -160,7 +184,7 @@ again:
 #endif
             goto again;
         } else {
-            log(LOGLEVEL::FATAL, "accept(%d) call failed.error[%d] info is %s.", sockfd,
+            FATAL_LOG("accept(%d) call failed.error[%d] info is %s.", sockfd,
                         errno, strerror(errno));
             return -1;
         }
@@ -178,7 +202,7 @@ int gpendingpool::getpeername_wrap(int sockfd, struct sockaddr *peeraddr, sockle
 {
     int val = getpeername(sockfd, peeraddr, addrlen);
     if (val == -1) {
-        log(LOGLEVEL::FATAL, "getpeername(%d) call failed.error[%d] info is %s.\n",
+        FATAL_LOG("getpeername(%d) call failed.error[%d] info is %s.\n",
             sockfd, errno, strerror(errno));
     }
     return val;
@@ -195,7 +219,7 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len)
     int ret;
     ret = getpeername_wrap(fd, (sockaddr*)&addr, &addr_len);
     if (ret < 0) {
-        log(LOGLEVEL::FATAL, "getpeername failed, errno=%m");
+        FATAL_LOG("getpeername failed, errno=%m");
         return "";
     }
     in.s_addr = addr.sin_addr.s_addr;
@@ -204,7 +228,7 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len)
         ipstr[INET_ADDRSTRLEN - 1] = 0;
         return ipstr;
     } else {
-        log(LOGLEVEL::FATAL, "get ip failed, errno=%m");
+        FATAL_LOG("get ip failed, errno=%m");
         return "";
     }
 }
@@ -237,25 +261,22 @@ void gpendingpool::listen_thread_process()
                     ret_sum += setsockopt(accept_fd, IPPROTO_TCP, TCP_QUICKACK, &on, sizeof(int));
 #endif
                     if (ret_sum != 0) { 
-                        log(LOGLEVEL::FATAL, "set socket option error");
+                        FATAL_LOG("set socket option error");
                     }
                     const char * ip_address = get_ip(accept_fd, ipstr, INET_ADDRSTRLEN);
                     if (!insert_item(accept_fd)) {
-                        log(LOGLEVEL::FATAL, "UI connect overflow! ip=%s.sock num=%d", ip_address);
+                        FATAL_LOG("UI connect overflow! ip=%s.sock num=%d", ip_address);
                         close_wrap(accept_fd);
                     } else {
-                        log(LOGLEVEL::NOTICE, "accept connect from %s.", ip_address);
+                        NOTICE_LOG("accept connect from %s.", ip_address);
                     }
                 } else {
-                    log(LOGLEVEL::WARNING, "accept request from UI error! ret=%d", accept_fd);
+                    WARNING_LOG("accept request from UI error! ret=%d", accept_fd);
                     continue;
                 }
             }
             check_item(fdset);
-            
         }
-
-
     }
 }
 
@@ -328,7 +349,7 @@ void gpendingpool::check_item(fd_set & pfs)
                     auto td = std::chrono::system_clock::now() - fd.second.last_active;
                     auto ms_cnt = std::chrono::duration_cast<std::chrono::milliseconds>(td).count();
                     if (ms_cnt > get_alive_timeout_ms() ) {
-                        log(LOGLEVEL::WARNING, "[get query] socket %d, handle %d timeout", 
+                        WARNING_LOG("[get query] socket %d, handle %d timeout", 
                             fd.first, ms_cnt);
                         reset_item(fd.first, false);
                     }
@@ -350,14 +371,14 @@ bool gpendingpool::ready_queue_push(int socket)
     iter->second.enter_queue_time = std::chrono::system_clock::now();
 
     if (ready_queue.size() > 100) {
-        log(LOGLEVEL::WARNING, "Buffer overflow: %u", ready_queue.size());
+        WARNING_LOG("Buffer overflow: %u", ready_queue.size());
         return false;
     } else 
     {
         iter->second.status = fd_item::BUSY;
         ready_queue.push(iter->first);
         cond_var.notify_one();
-        log(LOGLEVEL::DEBUG,
+        log(DEBUG,
             "Ready %u sockets: handle %d, signal sent.", 
             ready_queue.size(), iter->first);
     }
@@ -384,18 +405,18 @@ std::optional<std::pair<int, unsigned int>> gpendingpool::ready_queue_pop()
 
 bool gpendingpool::start()
 {
-    log(LOGLEVEL::DEBUG, "start");
+    log(DEBUG, "start");
     if (is_exit) {
-        log(LOGLEVEL::WARNING, "has STOP");
+        WARNING_LOG("has STOP");
         return false;
     }
     listen_fd = -1;
     if ((listen_fd = tcplisten_wrap(get_listen_port(), get_queue_len())) < 0) {
-        log(LOGLEVEL::WARNING, "fail to listen [port=%u]!", get_listen_port());
+        WARNING_LOG("fail to listen [port=%u]!", get_listen_port());
         return false;
     }
     else {
-        log(LOGLEVEL::WARNING, "succ to listen port[%d] on fd[%d]", 
+        WARNING_LOG("succ to listen port[%d] on fd[%d]", 
             get_listen_port(), listen_fd);
     }
     listen_thread = std::thread([this]{this->listen_thread_process();});
@@ -405,7 +426,7 @@ bool gpendingpool::start()
 
 bool gpendingpool::stop()
 {
-    log(LOGLEVEL::DEBUG, "stop");
+    log(DEBUG, "stop");
     is_exit = true;
     this->listen_thread.join();
     return true;
