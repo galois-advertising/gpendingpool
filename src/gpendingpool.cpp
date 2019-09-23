@@ -9,26 +9,29 @@
 #include <netinet/tcp.h>
 #include "gpendingpool.h"
 
+#define LOGLINE(x) LOGLINE_(x)
+#define LOGLINE_(x) #x
+
 #ifdef _DEBUG_LOG_
-#define BEBUG_LOG(fmt, ...) this->log(DEBUG, "["__FILE__"]["__LINE__"][DEBUG]"##fmt, __VA_ARGS__);
+#define DEBUG_LOG(fmt, ...) this->log(DEBUG, "[" __FILE__"][" LOGLINE(__LINE__) "][DEBUG]" fmt,  __VA_ARGS__);
 #else
-#define BEBUG_LOG(fmt, ...)
+#define DEBUG_LOG(fmt, ...)
 #endif
 
 #ifdef _NOTICE_LOG_
-#define NOTICE_LOG(fmt, ...) this->log(DEBUG, "["__FILE__"]["__LINE__"][DEBUG]"##fmt, __VA_ARGS__);
+#define NOTICE_LOG(fmt, ...) this->log(NOTICE, "[" __FILE__"][" LOGLINE(__LINE__) "][NOTICE]" fmt,  __VA_ARGS__);
 #else
 #define NOTICE_LOG(fmt, ...)
 #endif
 
 #ifdef _WARNING_LOG_
-#define WARNING_LOG(fmt, ...) this->log(DEBUG, "["__FILE__"]["__LINE__"][DEBUG]"##fmt, __VA_ARGS__);
+#define WARNING_LOG(fmt, ...) this->log(WARNING, "[" __FILE__"][" LOGLINE(__LINE__) "][WARNING]" fmt,  __VA_ARGS__);
 #else
 #define WARNING_LOG(fmt, ...)
 #endif
 
 #ifdef _FATAL_LOG_
-#define FATAL_LOG(fmt, ...) this->log(DEBUG, "["__FILE__"]["__LINE__"][DEBUG]"##fmt, __VA_ARGS__);
+#define FATAL_LOG(fmt, ...) this->log(FATAL, "[" __FILE__"][" LOGLINE(__LINE__) "][FATAL]" fmt,  __VA_ARGS__);
 #else
 #define FATAL_LOG(fmt, ...)
 #endif
@@ -37,7 +40,7 @@ namespace galois
 {
 unsigned int gpendingpool::get_listen_port() const
 {
-    return 8707;
+    return 8709;
 }
 
 unsigned int gpendingpool::get_queue_len() const
@@ -219,7 +222,7 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len)
     int ret;
     ret = getpeername_wrap(fd, (sockaddr*)&addr, &addr_len);
     if (ret < 0) {
-        FATAL_LOG("getpeername failed, errno=%m");
+        FATAL_LOG("getpeername failed, errno=%m", errno);
         return "";
     }
     in.s_addr = addr.sin_addr.s_addr;
@@ -228,14 +231,14 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len)
         ipstr[INET_ADDRSTRLEN - 1] = 0;
         return ipstr;
     } else {
-        FATAL_LOG("get ip failed, errno=%m");
+        FATAL_LOG("get ip failed, errno=%m", errno);
         return "";
     }
 }
 
 void gpendingpool::listen_thread_process()
 {
-
+    DEBUG_LOG("listen thread start.%s", "");
     fd_set fdset;
     timeval select_timeout = {
         get_select_timeout_ms() / 1000, 
@@ -253,6 +256,7 @@ void gpendingpool::listen_thread_process()
             if (listen_fd != -1 && FD_ISSET(listen_fd, &fdset)) {
                 char ipstr[INET_ADDRSTRLEN];
                 if ((accept_fd = accept_wrap(listen_fd, &saddr, &addr_len)) > 0) {
+                    DEBUG_LOG("accept a new fd: %d", accept_fd);
                     int ret_sum = 0;
 #ifdef TCP_NODELAY
                     ret_sum += setsockopt(accept_fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(int));
@@ -261,7 +265,7 @@ void gpendingpool::listen_thread_process()
                     ret_sum += setsockopt(accept_fd, IPPROTO_TCP, TCP_QUICKACK, &on, sizeof(int));
 #endif
                     if (ret_sum != 0) { 
-                        FATAL_LOG("set socket option error");
+                        FATAL_LOG("set socket option error[ret_sum:%d]", ret_sum);
                     }
                     const char * ip_address = get_ip(accept_fd, ipstr, INET_ADDRSTRLEN);
                     if (!insert_item(accept_fd)) {
@@ -407,7 +411,6 @@ bool gpendingpool::start()
 {
     log(DEBUG, "start");
     if (is_exit) {
-        WARNING_LOG("has STOP");
         return false;
     }
     listen_fd = -1;
