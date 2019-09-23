@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <optional>
 #include <arpa/inet.h>  
+#include <netinet/tcp.h>
 
 namespace galois
 {
@@ -228,13 +229,18 @@ void gpendingpool::listen_thread_process()
             if (listen_fd != -1 && FD_ISSET(listen_fd, &fdset)) {
                 char ipstr[INET_ADDRSTRLEN];
                 if ((accept_fd = accept_wrap(listen_fd, &saddr, &addr_len)) > 0) {
-                    if (setsockopt(accept_fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(int)) != 0
-                        ||
-                        setsockopt(accept_fd, IPPROTO_TCP, TCP_QUICKACK, &on, sizeof(int)) != 0) {
+                    int ret_sum = 0;
+#ifdef TCP_NODELAY
+                    ret_sum += setsockopt(accept_fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(int));
+#endif
+#ifdef TCP_QUICKACK
+                    ret_sum += setsockopt(accept_fd, IPPROTO_TCP, TCP_QUICKACK, &on, sizeof(int));
+#endif
+                    if (ret_sum != 0) { 
                         log(LOGLEVEL::FATAL, "set socket option error");
                     }
                     const char * ip_address = get_ip(accept_fd, ipstr, INET_ADDRSTRLEN);
-                    if (insert_item(accept_fd) == -1) {
+                    if (!insert_item(accept_fd)) {
                         log(LOGLEVEL::FATAL, "UI connect overflow! ip=%s.sock num=%d", ip_address);
                         close_wrap(accept_fd);
                     } else {
@@ -253,10 +259,15 @@ void gpendingpool::listen_thread_process()
 }
 
 
-int gpendingpool::insert_item(int socket)
+bool gpendingpool::insert_item(int socket)
 {
     // Insert a accept fd 
-    fd_items[socket] = fd_item(fd_item::READY, socket);
+    auto iter = fd_items.find(socket);
+    if (iter != fd_items.end()) {
+        return false;
+    }
+    fd_items.insert(std::make_pair(socket, fd_item(fd_item::READY, socket)));
+    return true;
 }
 
 int gpendingpool::mask_item(fd_set & pfs)
@@ -265,7 +276,7 @@ int gpendingpool::mask_item(fd_set & pfs)
     int ready_cnt = 0;
     int busy_cnt = 0;
     std::for_each(fd_items.begin(), fd_items.end(),
-        [pfs, &max_fd, &ready_cnt, &busy_cnt](auto & fd){
+        [&pfs, &max_fd, &ready_cnt, &busy_cnt](auto & fd){
             switch(fd.second.status)
             {
             case fd_item::READY:
@@ -302,14 +313,14 @@ bool gpendingpool::reset_item(int socket, bool bKeepAlive)
 
 void gpendingpool::check_item(fd_set & pfs)
 {
-    std::for_each(fd_items.begin(), fd_items.end(), [this, pfs](auto & fd){
-        switch(fd.status)
+    std::for_each(fd_items.begin(), fd_items.end(), [this, &pfs](auto & fd){
+        switch (fd.second.status)
         {
         case fd_item::BUSY:
             fd.second.last_active = std::chrono::system_clock::now();
         break;
         case fd_item::READY:
-            if (FD_ISSET(fd.first, pfs)) {
+            if (FD_ISSET(fd.first, &pfs)) {
                 if (ready_queue_push(fd.first) < 0) {
                     reset_item(fd.first, false);
                 } else {
@@ -352,7 +363,7 @@ bool gpendingpool::ready_queue_push(int socket)
     return true;
 }
 
-std::optional<std::pair<int, std::chrono::duration>> gpendingpool::ready_queue_pop()
+std::optional<std::pair<int, unsigned int>> gpendingpool::ready_queue_pop()
 {
     std::unique_lock<std::mutex> lk(mtx);
     cond_var.wait(lk, [this]{return !this->ready_queue.empty();});
@@ -366,7 +377,8 @@ std::optional<std::pair<int, std::chrono::duration>> gpendingpool::ready_queue_p
         iter->second.status = fd_item::BUSY;
     }
     auto wait_time = std::chrono::system_clock::now() - iter->second.enter_queue_time;
-    return std::make_pair<socket, wait_time>;
+    unsigned int ms_cnt = std::chrono::duration_cast<std::chrono::microseconds>(wait_time).count();
+    return std::make_pair(socket, ms_cnt);
 }
 
 bool gpendingpool::start()
