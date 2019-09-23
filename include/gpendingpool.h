@@ -52,18 +52,25 @@ private:
         fd_item(decltype(status) _status, int _socket) : 
             status(_status), socket(_socket), 
             last_active(std::chrono::system_clock::now()), enter_queue_time() {}
+        fd_item & operator = (const fd_item & o) {
+            status = o.status; 
+            socket = o.socket;
+            last_active = o.last_active;
+            enter_queue_time = o.enter_queue_time;
+            return *this;
+        }
     };
     std::map<int, fd_item> fd_items;
     // Insert the socket into readyqueue
     bool ready_queue_push(int socket);
     // Get a READY socket and mark it to BUSY. (out,out,out)
-    std::optional<std::pair<int, std::chrono::duration>> ready_queue_pop();
+    std::optional<std::pair<int, unsigned int> > ready_queue_pop();
     // Close handle.(Just set to BUSY if bKeepAlive)
     bool reset_item(int socket, bool bKeepAlive);
     // Add the fds which are READY to fd_set 
     int mask_item(fd_set & pfs);
   // Insert a accept fd 
-    int insert_item(int sock_work); 
+    bool insert_item(int sock_work); 
     // Check all sockets.Only update the active time for socket which are BUSY, 
     // or add to ready queue if the socket is READY and has been set.
     void check_item(fd_set & pfs);
