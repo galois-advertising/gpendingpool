@@ -127,14 +127,14 @@ int gpendingpool::bind_wrap(int sockfd, const struct sockaddr *myaddr, socklen_t
     return val;
 }
 
-int gpendingpool::tcplisten_wrap(int port, int queue)
+std::optional<gpendingpool::socket_t> gpendingpool::tcplisten_wrap(int port, int queue)
 {
-    int listenfd;
+    socket_t listenfd;
     const int on = 1;
     struct sockaddr_in soin;
 
     if ((listenfd = socket_wrap(PF_INET, SOCK_STREAM, 0)) < 0) {
-        return -1;
+        return std::nullopt;
     }
     setsockopt_wrap(listenfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
     memset(&soin, 0, sizeof(soin));
@@ -143,14 +143,14 @@ int gpendingpool::tcplisten_wrap(int port, int queue)
     soin.sin_port = htons((uint16_t)port);
     if (bind_wrap(listenfd, (struct sockaddr *) &soin, sizeof(soin)) < 0) {
         close_wrap(listenfd);
-        return -1;
+        return std::nullopt;
     }
     if(queue <= 0) {
         queue = 5;
     }
     if (listen_wrap(listenfd, queue) < 0) {
         close_wrap(listenfd);
-        return -1;
+        return std::nullopt;
     }
     return listenfd;
 }
@@ -419,11 +419,13 @@ bool gpendingpool::start()
         return false;
     }
     listen_fd = -1;
-    if ((listen_fd = tcplisten_wrap(get_listen_port(), get_queue_len())) < 0) {
+    auto lfd = tcplisten_wrap(get_listen_port(), get_queue_len());
+    if (!lfd) {
         WARNING_LOG("fail to listen [port=%u]!", get_listen_port());
         return false;
     }
     else {
+        listen_fd = lfd.value();
         WARNING_LOG("succ to listen port[%d] on fd[%d]", 
             get_listen_port(), listen_fd);
     }
