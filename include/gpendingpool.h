@@ -30,6 +30,7 @@ protected:
     virtual unsigned int get_queue_len() const;
     virtual int get_alive_timeout_ms() const;
     virtual int get_select_timeout_ms() const;
+    virtual size_t get_max_ready_queue_len() const;
     virtual void log(LOGLEVEL level, const char * fmt, ...) const;
 private:
     // function wraps

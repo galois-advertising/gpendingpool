@@ -50,11 +50,16 @@ unsigned int gpendingpool::get_queue_len() const
 
 int gpendingpool::get_alive_timeout_ms() const
 {
-    return 10240;
+    return 4096;
 }
 int gpendingpool::get_select_timeout_ms() const
 {
-    return 10240;
+    return 1024;
+}
+
+size_t gpendingpool::get_max_ready_queue_len() const
+{
+    return 3;
 }
 
 void gpendingpool::log(LOGLEVEL level, const char * fmt, ...) const
@@ -227,7 +232,6 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len)
     }
     in.s_addr = addr.sin_addr.s_addr;
     if (inet_ntop(AF_INET, &in, ipstr, INET_ADDRSTRLEN) != NULL) {
-        //在ipstr末尾加0，保证字符串打印等
         ipstr[INET_ADDRSTRLEN - 1] = 0;
         return ipstr;
     } else {
@@ -244,7 +248,6 @@ void gpendingpool::listen_thread_process()
         get_select_timeout_ms() / 1000, 
         get_select_timeout_ms() * 1000 % 1000000
     };
-    int on = 1;
     sockaddr saddr;
     socklen_t addr_len = sizeof(struct sockaddr);
     int accept_fd = -1;
@@ -256,13 +259,19 @@ void gpendingpool::listen_thread_process()
         };
         int max_fd = std::max(mask_item(fdset), listen_fd) + 1;
         DEBUG_LOG("max_fd:%d", max_fd);
-        if (select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout) > 0) {
-            DEBUG_LOG("select returned:%s", "s");
+        auto select_res = select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout);
+        if (select_res < 0) {
+            FATAL_LOG("select error: %d", errno);
+        } else if (select_res == 0) {
+            DEBUG_LOG("fd size: %u", fd_items.size());
+        }
+        else if (select_res > 0) {
             if (listen_fd != -1 && FD_ISSET(listen_fd, &fdset)) {
                 char ipstr[INET_ADDRSTRLEN];
                 if ((accept_fd = accept_wrap(listen_fd, &saddr, &addr_len)) > 0) {
                     DEBUG_LOG("accept a new fd: %d", accept_fd);
                     int ret_sum = 0;
+                    int on = 1;
 #ifdef TCP_NODELAY
                     ret_sum += setsockopt(accept_fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(int));
 #endif
@@ -274,7 +283,6 @@ void gpendingpool::listen_thread_process()
                     }
                     const char * ip_address = get_ip(accept_fd, ipstr, INET_ADDRSTRLEN);
                     if (!insert_item(accept_fd)) {
-                        FATAL_LOG("UI connect overflow! ip=%s.sock num=%d", ip_address);
                         close_wrap(accept_fd);
                     } else {
                         NOTICE_LOG("accept connect from %s.", ip_address);
@@ -293,11 +301,12 @@ void gpendingpool::listen_thread_process()
 bool gpendingpool::insert_item(int socket)
 {
     // Insert a accept fd 
-    auto iter = fd_items.find(socket);
-    if (iter != fd_items.end()) {
-        return false;
+    auto res = fd_items.insert(std::make_pair(socket, fd_item(fd_item::READY, socket)));
+    if (res.second) {
+        DEBUG_LOG("insert_item succeed: fd[%d].", socket);
+        return true;
     }
-    fd_items.insert(std::make_pair(socket, fd_item(fd_item::READY, socket)));
+    FATAL_LOG("insert_item fail: fd[%d] already exists.", socket);
     return true;
 }
 
@@ -356,10 +365,9 @@ void gpendingpool::check_item(fd_set & pfs)
                     reset_item(fd.first, false);
                 } else {
                     auto td = std::chrono::system_clock::now() - fd.second.last_active;
-                    auto ms_cnt = std::chrono::duration_cast<std::chrono::milliseconds>(td).count();
+                    auto ms_cnt = std::chrono::duration_cast<std::chrono::microseconds>(td).count();
                     if (ms_cnt > get_alive_timeout_ms() ) {
-                        WARNING_LOG("[get query] socket %d, handle %d timeout", 
-                            fd.first, ms_cnt);
+                        WARNING_LOG("socket %d[%u] timeout[%u]", fd.first, ms_cnt, get_alive_timeout_ms());
                         reset_item(fd.first, false);
                     }
                 }
@@ -379,8 +387,8 @@ bool gpendingpool::ready_queue_push(int socket)
     iter->second.last_active = std::chrono::system_clock::now();
     iter->second.enter_queue_time = std::chrono::system_clock::now();
 
-    if (ready_queue.size() > 100) {
-        WARNING_LOG("Buffer overflow: %u", ready_queue.size());
+    if (ready_queue.size() >= get_max_ready_queue_len()) {
+        WARNING_LOG("Buffer overflow: %u", get_max_ready_queue_len());
         return false;
     } else 
     {
