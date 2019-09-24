@@ -26,3 +26,5 @@ $ make install
 ## Credits
 
 ## License
+
+MIT
