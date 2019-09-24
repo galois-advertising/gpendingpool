@@ -50,11 +50,11 @@ unsigned int gpendingpool::get_queue_len() const
 
 int gpendingpool::get_alive_timeout_ms() const
 {
-    return 1024;
+    return 10240;
 }
 int gpendingpool::get_select_timeout_ms() const
 {
-    return 1024;
+    return 10240;
 }
 
 void gpendingpool::log(LOGLEVEL level, const char * fmt, ...) const
@@ -248,11 +248,16 @@ void gpendingpool::listen_thread_process()
     sockaddr saddr;
     socklen_t addr_len = sizeof(struct sockaddr);
     int accept_fd = -1;
-    int max_fd = std::max(mask_item(fdset), listen_fd) + 1;
 
     while(!is_exit) {
         FD_ZERO(&fdset);
+        if (listen_fd != -1) {
+            FD_SET(listen_fd, &fdset);
+        };
+        int max_fd = std::max(mask_item(fdset), listen_fd) + 1;
+        DEBUG_LOG("max_fd:%d", max_fd);
         if (select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout) > 0) {
+            DEBUG_LOG("select returned:%s", "s");
             if (listen_fd != -1 && FD_ISSET(listen_fd, &fdset)) {
                 char ipstr[INET_ADDRSTRLEN];
                 if ((accept_fd = accept_wrap(listen_fd, &saddr, &addr_len)) > 0) {
