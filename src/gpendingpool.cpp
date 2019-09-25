@@ -365,7 +365,7 @@ void gpendingpool::check_item(fd_set & pfs)
                     reset_item(fd.first, false);
                 } else {
                     auto td = std::chrono::system_clock::now() - fd.second.last_active;
-                    auto ms_cnt = std::chrono::duration_cast<std::chrono::microseconds>(td).count();
+                    auto ms_cnt = std::chrono::duration_cast<std::chrono::milliseconds>(td).count();
                     if (ms_cnt > get_alive_timeout_ms() ) {
                         WARNING_LOG("socket %d[%u] timeout[%u]", fd.first, ms_cnt, get_alive_timeout_ms());
                         reset_item(fd.first, false);
@@ -416,7 +416,7 @@ std::optional<std::pair<int, unsigned int>> gpendingpool::ready_queue_pop()
         iter->second.status = fd_item::BUSY;
     }
     auto wait_time = std::chrono::system_clock::now() - iter->second.enter_queue_time;
-    unsigned int ms_cnt = std::chrono::duration_cast<std::chrono::microseconds>(wait_time).count();
+    unsigned int ms_cnt = std::chrono::duration_cast<std::chrono::milliseconds>(wait_time).count();
     return std::make_pair(socket, ms_cnt);
 }
 
