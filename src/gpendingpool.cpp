@@ -50,11 +50,16 @@ unsigned int gpendingpool::get_queue_len() const
 
 int gpendingpool::get_alive_timeout_ms() const
 {
-    return 10240;
+    return 4096;
 }
 int gpendingpool::get_select_timeout_ms() const
 {
-    return 10240;
+    return 1024;
+}
+
+size_t gpendingpool::get_max_ready_queue_len() const
+{
+    return 3;
 }
 
 void gpendingpool::log(LOGLEVEL level, const char * fmt, ...) const
@@ -127,14 +132,14 @@ int gpendingpool::bind_wrap(int sockfd, const struct sockaddr *myaddr, socklen_t
     return val;
 }
 
-int gpendingpool::tcplisten_wrap(int port, int queue)
+std::optional<gpendingpool::socket_t> gpendingpool::tcplisten_wrap(int port, int queue)
 {
-    int listenfd;
+    socket_t listenfd;
     const int on = 1;
     struct sockaddr_in soin;
 
     if ((listenfd = socket_wrap(PF_INET, SOCK_STREAM, 0)) < 0) {
-        return -1;
+        return std::nullopt;
     }
     setsockopt_wrap(listenfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
     memset(&soin, 0, sizeof(soin));
@@ -143,14 +148,14 @@ int gpendingpool::tcplisten_wrap(int port, int queue)
     soin.sin_port = htons((uint16_t)port);
     if (bind_wrap(listenfd, (struct sockaddr *) &soin, sizeof(soin)) < 0) {
         close_wrap(listenfd);
-        return -1;
+        return std::nullopt;
     }
     if(queue <= 0) {
         queue = 5;
     }
     if (listen_wrap(listenfd, queue) < 0) {
         close_wrap(listenfd);
-        return -1;
+        return std::nullopt;
     }
     return listenfd;
 }
@@ -227,7 +232,6 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len)
     }
     in.s_addr = addr.sin_addr.s_addr;
     if (inet_ntop(AF_INET, &in, ipstr, INET_ADDRSTRLEN) != NULL) {
-        //在ipstr末尾加0，保证字符串打印等
         ipstr[INET_ADDRSTRLEN - 1] = 0;
         return ipstr;
     } else {
@@ -244,7 +248,6 @@ void gpendingpool::listen_thread_process()
         get_select_timeout_ms() / 1000, 
         get_select_timeout_ms() * 1000 % 1000000
     };
-    int on = 1;
     sockaddr saddr;
     socklen_t addr_len = sizeof(struct sockaddr);
     int accept_fd = -1;
@@ -256,13 +259,19 @@ void gpendingpool::listen_thread_process()
         };
         int max_fd = std::max(mask_item(fdset), listen_fd) + 1;
         DEBUG_LOG("max_fd:%d", max_fd);
-        if (select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout) > 0) {
-            DEBUG_LOG("select returned:%s", "s");
+        auto select_res = select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout);
+        if (select_res < 0) {
+            FATAL_LOG("select error: %d", errno);
+        } else if (select_res == 0) {
+            DEBUG_LOG("fd size: %u", fd_items.size());
+        }
+        else if (select_res > 0) {
             if (listen_fd != -1 && FD_ISSET(listen_fd, &fdset)) {
                 char ipstr[INET_ADDRSTRLEN];
                 if ((accept_fd = accept_wrap(listen_fd, &saddr, &addr_len)) > 0) {
                     DEBUG_LOG("accept a new fd: %d", accept_fd);
                     int ret_sum = 0;
+                    int on = 1;
 #ifdef TCP_NODELAY
                     ret_sum += setsockopt(accept_fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(int));
 #endif
@@ -274,7 +283,6 @@ void gpendingpool::listen_thread_process()
                     }
                     const char * ip_address = get_ip(accept_fd, ipstr, INET_ADDRSTRLEN);
                     if (!insert_item(accept_fd)) {
-                        FATAL_LOG("UI connect overflow! ip=%s.sock num=%d", ip_address);
                         close_wrap(accept_fd);
                     } else {
                         NOTICE_LOG("accept connect from %s.", ip_address);
@@ -293,11 +301,12 @@ void gpendingpool::listen_thread_process()
 bool gpendingpool::insert_item(int socket)
 {
     // Insert a accept fd 
-    auto iter = fd_items.find(socket);
-    if (iter != fd_items.end()) {
-        return false;
+    auto res = fd_items.insert(std::make_pair(socket, fd_item(fd_item::READY, socket)));
+    if (res.second) {
+        DEBUG_LOG("insert_item succeed: fd[%d].", socket);
+        return true;
     }
-    fd_items.insert(std::make_pair(socket, fd_item(fd_item::READY, socket)));
+    FATAL_LOG("insert_item fail: fd[%d] already exists.", socket);
     return true;
 }
 
@@ -358,8 +367,7 @@ void gpendingpool::check_item(fd_set & pfs)
                     auto td = std::chrono::system_clock::now() - fd.second.last_active;
                     auto ms_cnt = std::chrono::duration_cast<std::chrono::milliseconds>(td).count();
                     if (ms_cnt > get_alive_timeout_ms() ) {
-                        WARNING_LOG("[get query] socket %d, handle %d timeout", 
-                            fd.first, ms_cnt);
+                        WARNING_LOG("socket %d[%u] timeout[%u]", fd.first, ms_cnt, get_alive_timeout_ms());
                         reset_item(fd.first, false);
                     }
                 }
@@ -379,8 +387,8 @@ bool gpendingpool::ready_queue_push(int socket)
     iter->second.last_active = std::chrono::system_clock::now();
     iter->second.enter_queue_time = std::chrono::system_clock::now();
 
-    if (ready_queue.size() > 100) {
-        WARNING_LOG("Buffer overflow: %u", ready_queue.size());
+    if (ready_queue.size() >= get_max_ready_queue_len()) {
+        WARNING_LOG("Buffer overflow: %u", get_max_ready_queue_len());
         return false;
     } else 
     {
@@ -408,7 +416,7 @@ std::optional<std::pair<int, unsigned int>> gpendingpool::ready_queue_pop()
         iter->second.status = fd_item::BUSY;
     }
     auto wait_time = std::chrono::system_clock::now() - iter->second.enter_queue_time;
-    unsigned int ms_cnt = std::chrono::duration_cast<std::chrono::microseconds>(wait_time).count();
+    unsigned int ms_cnt = std::chrono::duration_cast<std::chrono::milliseconds>(wait_time).count();
     return std::make_pair(socket, ms_cnt);
 }
 
@@ -419,11 +427,13 @@ bool gpendingpool::start()
         return false;
     }
     listen_fd = -1;
-    if ((listen_fd = tcplisten_wrap(get_listen_port(), get_queue_len())) < 0) {
+    auto lfd = tcplisten_wrap(get_listen_port(), get_queue_len());
+    if (!lfd) {
         WARNING_LOG("fail to listen [port=%u]!", get_listen_port());
         return false;
     }
     else {
+        listen_fd = lfd.value();
         WARNING_LOG("succ to listen port[%d] on fd[%d]", 
             get_listen_port(), listen_fd);
     }

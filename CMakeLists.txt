@@ -24,6 +24,8 @@ set(CMAKE_BUILD_TYPE "Release")
 include_directories("${PROJECT_SOURCE_DIR}/include")
 include_directories("${PROJECT_SOURCE_DIR}/")
 
+ADD_LIBRARY(gpendingpool STATIC ${PROJECT_SOURCE_DIR}/src/gpendingpool.cpp)
+
 add_executable(gpendingpool_demo 
 "${PROJECT_SOURCE_DIR}/src/gpendingpool.cpp" 
 "${PROJECT_SOURCE_DIR}/demo.cpp" 
