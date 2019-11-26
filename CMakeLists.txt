@@ -33,12 +33,12 @@ include_directories(${Boost_INCLUDE_DIRS})
 link_directories(${Boost_LIBRARY_DIRS})
 
 include_directories("${PROJECT_SOURCE_DIR}/include")
-include_directories("${PROJECT_SOURCE_DIR}/common/util/include")
+include_directories("${CMAKE_SOURCE_DIR}/common/util/include")
 include_directories("${PROJECT_SOURCE_DIR}/")
 
 ADD_LIBRARY(gpendingpool STATIC ${PROJECT_SOURCE_DIR}/src/gpendingpool.cpp)
 
-add_subdirectory(common/util)
+add_subdirectory(${CMAKE_SOURCE_DIR}/common/util)
 add_executable(gpendingpool_demo 
 "${PROJECT_SOURCE_DIR}/demo.cpp" 
 )
