@@ -21,12 +21,25 @@ set(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g -ggdb -std=c++2a -fno-str
 set(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3 -Wall -std=c++2a -fno-strict-aliasing -Wno-register")
 set(CMAKE_BUILD_TYPE "Release")
 
+find_package(Boost REQUIRED COMPONENTS log)
+if(NOT Boost_FOUND)
+    message("Can not find Boost")
+endif()
+
+add_definitions(-DBOOST_SPIRIT_THREADSAFE)
+add_definitions(-DBOOST_ALL_DYN_LINK)
+
+include_directories(${Boost_INCLUDE_DIRS})
+link_directories(${Boost_LIBRARY_DIRS})
+
 include_directories("${PROJECT_SOURCE_DIR}/include")
+include_directories("${PROJECT_SOURCE_DIR}/common/util/include")
 include_directories("${PROJECT_SOURCE_DIR}/")
 
 ADD_LIBRARY(gpendingpool STATIC ${PROJECT_SOURCE_DIR}/src/gpendingpool.cpp)
 
+add_subdirectory(common/util)
 add_executable(gpendingpool_demo 
-"${PROJECT_SOURCE_DIR}/src/gpendingpool.cpp" 
 "${PROJECT_SOURCE_DIR}/demo.cpp" 
 )
+target_link_libraries(gpendingpool_demo common gpendingpool)

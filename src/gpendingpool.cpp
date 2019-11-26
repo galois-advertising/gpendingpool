@@ -8,30 +8,31 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include "gpendingpool.h"
+#include "log.h"
 
 #define LOGLINE(x) LOGLINE_(x)
 #define LOGLINE_(x) #x
 
 #ifdef _DEBUG_LOG_
-#define DEBUG_LOG(fmt, ...) this->log(DEBUG, "[" __FILE__"][" LOGLINE(__LINE__) "][DEBUG]" fmt,  __VA_ARGS__);
+#define DEBUG_LOG(fmt, ...) log(LOG_LEVEL::DEBUG, "[" __FILE__"][" LOGLINE(__LINE__) "][DEBUG]" fmt,  __VA_ARGS__);
 #else
 #define DEBUG_LOG(fmt, ...)
 #endif
 
 #ifdef _NOTICE_LOG_
-#define NOTICE_LOG(fmt, ...) this->log(NOTICE, "[" __FILE__"][" LOGLINE(__LINE__) "][NOTICE]" fmt,  __VA_ARGS__);
+#define NOTICE_LOG(fmt, ...) log(LOG_LEVEL::INFO, "[" __FILE__"][" LOGLINE(__LINE__) "][NOTICE]" fmt,  __VA_ARGS__);
 #else
 #define NOTICE_LOG(fmt, ...)
 #endif
 
 #ifdef _WARNING_LOG_
-#define WARNING_LOG(fmt, ...) this->log(WARNING, "[" __FILE__"][" LOGLINE(__LINE__) "][WARNING]" fmt,  __VA_ARGS__);
+#define WARNING_LOG(fmt, ...) log(LOG_LEVEL::WARNING, "[" __FILE__"][" LOGLINE(__LINE__) "][WARNING]" fmt,  __VA_ARGS__);
 #else
 #define WARNING_LOG(fmt, ...)
 #endif
 
 #ifdef _FATAL_LOG_
-#define FATAL_LOG(fmt, ...) this->log(FATAL, "[" __FILE__"][" LOGLINE(__LINE__) "][FATAL]" fmt,  __VA_ARGS__);
+#define FATAL_LOG(fmt, ...) log(LOG_LEVEL::FATAL, "[" __FILE__"][" LOGLINE(__LINE__) "][FATAL]" fmt,  __VA_ARGS__);
 #else
 #define FATAL_LOG(fmt, ...)
 #endif
@@ -60,16 +61,6 @@ int gpendingpool::get_select_timeout_ms() const
 size_t gpendingpool::get_max_ready_queue_len() const
 {
     return 3;
-}
-
-void gpendingpool::log(LOGLEVEL level, const char * fmt, ...) const
-{
-    char buf[1024];
-    va_list args; 
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    std::cerr<<buf<<std::endl;
 }
 
 gpendingpool::gpendingpool() : 
@@ -395,8 +386,7 @@ bool gpendingpool::ready_queue_push(int socket)
         iter->second.status = fd_item::BUSY;
         ready_queue.push(iter->first);
         cond_var.notify_one();
-        log(DEBUG,
-            "Ready %u sockets: handle %d, signal sent.", 
+        DEBUG_LOG("Ready %u sockets: handle %d, signal sent.", 
             ready_queue.size(), iter->first);
     }
     return true;
@@ -422,7 +412,7 @@ std::optional<std::pair<int, unsigned int>> gpendingpool::ready_queue_pop()
 
 bool gpendingpool::start()
 {
-    log(DEBUG, "start");
+    DEBUG_LOG("start: %s", "gpendingpool");
     if (is_exit) {
         return false;
     }
@@ -444,7 +434,7 @@ bool gpendingpool::start()
 
 bool gpendingpool::stop()
 {
-    log(DEBUG, "stop");
+    DEBUG_LOG("stop: %s", "gpendingpool");
     is_exit = true;
     this->listen_thread.join();
     return true;
