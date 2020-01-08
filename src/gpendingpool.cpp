@@ -10,33 +10,6 @@
 #include "gpendingpool.h"
 #include "log.h"
 
-#define LOGLINE(x) LOGLINE_(x)
-#define LOGLINE_(x) #x
-
-#ifdef _DEBUG_LOG_
-#define DEBUG_LOG(fmt, ...) log(LOG_LEVEL::DEBUG, "[" __FILE__"][" LOGLINE(__LINE__) "][DEBUG]" fmt,  __VA_ARGS__);
-#else
-#define DEBUG_LOG(fmt, ...)
-#endif
-
-#ifdef _NOTICE_LOG_
-#define NOTICE_LOG(fmt, ...) log(LOG_LEVEL::INFO, "[" __FILE__"][" LOGLINE(__LINE__) "][NOTICE]" fmt,  __VA_ARGS__);
-#else
-#define NOTICE_LOG(fmt, ...)
-#endif
-
-#ifdef _WARNING_LOG_
-#define WARNING_LOG(fmt, ...) log(LOG_LEVEL::WARNING, "[" __FILE__"][" LOGLINE(__LINE__) "][WARNING]" fmt,  __VA_ARGS__);
-#else
-#define WARNING_LOG(fmt, ...)
-#endif
-
-#ifdef _FATAL_LOG_
-#define FATAL_LOG(fmt, ...) log(LOG_LEVEL::FATAL, "[" __FILE__"][" LOGLINE(__LINE__) "][FATAL]" fmt,  __VA_ARGS__);
-#else
-#define FATAL_LOG(fmt, ...)
-#endif
-
 namespace galois
 {
 unsigned int gpendingpool::get_listen_port() const
@@ -83,7 +56,7 @@ int gpendingpool::listen_wrap(int sockfd, int backlog)
 {
     int val = listen(sockfd, backlog);
     if (val == -1) {
-        FATAL_LOG("listen(%d,%d) call failed.error[%d] info is %s.", sockfd,
+        FATAL("listen(%d,%d) call failed.error[%d] info is %s.", sockfd,
                     backlog, errno, strerror(errno));
     }
     return val;
@@ -94,7 +67,7 @@ int gpendingpool::setsockopt_wrap(int sockfd, int level, int optname,
 {
     int val = setsockopt(sockfd, level, optname, optval, optlen);
     if (val == -1) {
-        FATAL_LOG("setsockopt(%d,%d,%d) call failed.error[%d] info is %s.",
+        FATAL("setsockopt(%d,%d,%d) call failed.error[%d] info is %s.",
                     sockfd, level, optname, errno, strerror(errno));
     }
     return val;
@@ -104,7 +77,7 @@ int gpendingpool::socket_wrap(int family, int type, int protocol)
 {
     int val = socket(family, type, protocol);
     if (val == -1) {
-        FATAL_LOG("socket(%d,%d,%d) call failed.error[%d] info is %s.",
+        FATAL("socket(%d,%d,%d) call failed.error[%d] info is %s.",
                     family, type, protocol, errno, strerror(errno));
     }
     return val;
@@ -114,7 +87,7 @@ int gpendingpool::bind_wrap(int sockfd, const struct sockaddr *myaddr, socklen_t
 {
     int val = bind(sockfd, myaddr, addrlen);
     if (val == -1) {
-        FATAL_LOG("bind(%d,<%d,%d,%u>,%d) call failed.error[%d] info is %s.",
+        FATAL("bind(%d,<%d,%d,%u>,%d) call failed.error[%d] info is %s.",
             sockfd, ((struct sockaddr_in *) myaddr)->sin_family,
             ((struct sockaddr_in *) myaddr)->sin_port,
             ((struct sockaddr_in *) myaddr)->sin_addr.s_addr, addrlen, errno,
@@ -161,7 +134,7 @@ again:
         if (errno == EINTR) {
             goto again;
         }
-        FATAL_LOG("select() call error.error[%d] info is %s", errno,
+        FATAL("select() call error.error[%d] info is %s", errno,
                     strerror(errno));
     }
     if (val == 0) {
@@ -183,7 +156,7 @@ again:
 #endif
             goto again;
         } else {
-            FATAL_LOG("accept(%d) call failed.error[%d] info is %s.", sockfd,
+            FATAL("accept(%d) call failed.error[%d] info is %s.", sockfd,
                         errno, strerror(errno));
             return -1;
         }
@@ -201,7 +174,7 @@ int gpendingpool::getpeername_wrap(int sockfd, struct sockaddr *peeraddr, sockle
 {
     int val = getpeername(sockfd, peeraddr, addrlen);
     if (val == -1) {
-        FATAL_LOG("getpeername(%d) call failed.error[%d] info is %s.\n",
+        FATAL("getpeername(%d) call failed.error[%d] info is %s.\n",
             sockfd, errno, strerror(errno));
     }
     return val;
@@ -218,7 +191,7 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len)
     int ret;
     ret = getpeername_wrap(fd, (sockaddr*)&addr, &addr_len);
     if (ret < 0) {
-        FATAL_LOG("getpeername failed, errno=%m", errno);
+        FATAL("getpeername failed, errno=%m", errno);
         return "";
     }
     in.s_addr = addr.sin_addr.s_addr;
@@ -226,14 +199,14 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len)
         ipstr[INET_ADDRSTRLEN - 1] = 0;
         return ipstr;
     } else {
-        FATAL_LOG("get ip failed, errno=%m", errno);
+        FATAL("get ip failed, errno=%m", errno);
         return "";
     }
 }
 
 void gpendingpool::listen_thread_process()
 {
-    DEBUG_LOG("listen thread start.%s", "");
+    TRACE("listen thread start.%s", "");
     fd_set fdset;
     timeval select_timeout = {
         get_select_timeout_ms() / 1000, 
@@ -249,18 +222,18 @@ void gpendingpool::listen_thread_process()
             FD_SET(listen_fd, &fdset);
         };
         int max_fd = std::max(mask_item(fdset), listen_fd) + 1;
-        DEBUG_LOG("max_fd:%d", max_fd);
+        TRACE("max_fd:%d", max_fd);
         auto select_res = select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout);
         if (select_res < 0) {
-            FATAL_LOG("select error: %d", errno);
+            FATAL("select error: %d", errno);
         } else if (select_res == 0) {
-            DEBUG_LOG("fd size: %u", fd_items.size());
+            TRACE("fd size: %u", fd_items.size());
         }
         else if (select_res > 0) {
             if (listen_fd != -1 && FD_ISSET(listen_fd, &fdset)) {
                 char ipstr[INET_ADDRSTRLEN];
                 if ((accept_fd = accept_wrap(listen_fd, &saddr, &addr_len)) > 0) {
-                    DEBUG_LOG("accept a new fd: %d", accept_fd);
+                    TRACE("accept a new fd: %d", accept_fd);
                     int ret_sum = 0;
                     int on = 1;
 #ifdef TCP_NODELAY
@@ -270,16 +243,16 @@ void gpendingpool::listen_thread_process()
                     ret_sum += setsockopt(accept_fd, IPPROTO_TCP, TCP_QUICKACK, &on, sizeof(int));
 #endif
                     if (ret_sum != 0) { 
-                        FATAL_LOG("set socket option error[ret_sum:%d]", ret_sum);
+                        FATAL("set socket option error[ret_sum:%d]", ret_sum);
                     }
                     const char * ip_address = get_ip(accept_fd, ipstr, INET_ADDRSTRLEN);
                     if (!insert_item(accept_fd)) {
                         close_wrap(accept_fd);
                     } else {
-                        NOTICE_LOG("accept connect from %s.", ip_address);
+                        INFO("accept connect from %s.", ip_address);
                     }
                 } else {
-                    WARNING_LOG("accept request from UI error! ret=%d", accept_fd);
+                    WARNING("accept request from UI error! ret=%d", accept_fd);
                     continue;
                 }
             }
@@ -294,10 +267,10 @@ bool gpendingpool::insert_item(int socket)
     // Insert a accept fd 
     auto res = fd_items.insert(std::make_pair(socket, fd_item(fd_item::READY, socket)));
     if (res.second) {
-        DEBUG_LOG("insert_item succeed: fd[%d].", socket);
+        TRACE("insert_item succeed: fd[%d].", socket);
         return true;
     }
-    FATAL_LOG("insert_item fail: fd[%d] already exists.", socket);
+    FATAL("insert_item fail: fd[%d] already exists.", socket);
     return true;
 }
 
@@ -358,7 +331,7 @@ void gpendingpool::check_item(fd_set & pfs)
                     auto td = std::chrono::system_clock::now() - fd.second.last_active;
                     auto ms_cnt = std::chrono::duration_cast<std::chrono::milliseconds>(td).count();
                     if (ms_cnt > get_alive_timeout_ms() ) {
-                        WARNING_LOG("socket %d[%u] timeout[%u]", fd.first, ms_cnt, get_alive_timeout_ms());
+                        WARNING("socket %d[%u] timeout[%u]", fd.first, ms_cnt, get_alive_timeout_ms());
                         reset_item(fd.first, false);
                     }
                 }
@@ -379,14 +352,14 @@ bool gpendingpool::ready_queue_push(int socket)
     iter->second.enter_queue_time = std::chrono::system_clock::now();
 
     if (ready_queue.size() >= get_max_ready_queue_len()) {
-        WARNING_LOG("Buffer overflow: %u", get_max_ready_queue_len());
+        WARNING("Buffer overflow: %u", get_max_ready_queue_len());
         return false;
     } else 
     {
         iter->second.status = fd_item::BUSY;
         ready_queue.push(iter->first);
         cond_var.notify_one();
-        DEBUG_LOG("Ready %u sockets: handle %d, signal sent.", 
+        TRACE("Ready %u sockets: handle %d, signal sent.", 
             ready_queue.size(), iter->first);
     }
     return true;
@@ -412,19 +385,19 @@ std::optional<std::pair<int, unsigned int>> gpendingpool::ready_queue_pop()
 
 bool gpendingpool::start()
 {
-    DEBUG_LOG("start: %s", "gpendingpool");
+    TRACE("start: %s", "gpendingpool");
     if (is_exit) {
         return false;
     }
     listen_fd = -1;
     auto lfd = tcplisten_wrap(get_listen_port(), get_queue_len());
     if (!lfd) {
-        WARNING_LOG("fail to listen [port=%u]!", get_listen_port());
+        WARNING("fail to listen [port=%u]!", get_listen_port());
         return false;
     }
     else {
         listen_fd = lfd.value();
-        WARNING_LOG("succ to listen port[%d] on fd[%d]", 
+        WARNING("succ to listen port[%d] on fd[%d]", 
             get_listen_port(), listen_fd);
     }
     listen_thread = std::thread([this]{this->listen_thread_process();});
@@ -434,7 +407,7 @@ bool gpendingpool::start()
 
 bool gpendingpool::stop()
 {
-    DEBUG_LOG("stop: %s", "gpendingpool");
+    TRACE("stop: %s", "gpendingpool");
     is_exit = true;
     this->listen_thread.join();
     return true;
