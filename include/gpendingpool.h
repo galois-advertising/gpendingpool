@@ -14,19 +14,18 @@
 #include <chrono>
 #include <condition_variable>
 
-namespace galois
-{
+namespace galois {
 
-class gpendingpool
-{
+class gpendingpool {
 public: 
     using socket_t = int;
     using fd_t = int;
     using port_t = int;
     using milliseconds = unsigned int;
-    using ready_socket_opt_t = std::optional<std::pair<socket_t, milliseconds>>;
-    using socket_opt_t = std::optional<socket_t>;
     using time_point_t = std::chrono::system_clock::time_point;
+    using ready_socket_opt_t = std::optional<std::pair<socket_t, time_point_t>>;
+    using socket_opt_t = std::optional<socket_t>;
+    using ready_queue_t = std::queue<socket_t>;
     gpendingpool();
     virtual ~gpendingpool();
     gpendingpool(const gpendingpool&) = delete;
@@ -58,23 +57,22 @@ private:
     socket_opt_t tcplisten(port_t, int queue);
 private:
     struct fd_item {
-        enum class status_t {READY, BUSY};
-        status_t status;
         socket_t socket;
-        time_point_t last_active;
+        time_point_t connected_time;
         time_point_t enter_queue_time;
-        fd_item(status_t, socket_t);
+        fd_item(socket_t);
         fd_item& operator = (const fd_item&);
+        milliseconds pending_time_ms();
     };
 private:
     using socket_to_fd_t = std::unordered_map<socket_t, fd_item>;
 
-    socket_to_fd_t fd_items;
     bool ready_queue_push(socket_t);
-    bool reset_item(socket_t, bool bKeepAlive);
-    int mask_item(fd_set&);
-    bool insert_item(socket_t); 
-    void check_item(fd_set&);
+    bool drop_normal_fd(socket_t);
+    int mask_normal_fd(fd_set&);
+    bool insert_normal_fd(socket_t); 
+    void check_normal_fd(fd_set&);
+    void drop_timeout_fd();
 private:
     void listen_thread_process();
     const char * get_ip(socket_t fd, char* ipstr, size_t len);
@@ -83,7 +81,9 @@ private:
     std::thread listen_thread; 
     std::mutex mtx;
     std::condition_variable cond_var;
-    std::queue<socket_t> ready_queue;
+    ready_queue_t ready_queue;
+    socket_to_fd_t fd_items;
+    
 };
 
 }

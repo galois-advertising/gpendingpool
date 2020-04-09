@@ -21,7 +21,7 @@ unsigned int gpendingpool::get_queue_len() const {
 }
 
 int gpendingpool::get_alive_timeout_ms() const {
-    return 4096;
+    return 10096;
 }
 
 int gpendingpool::get_select_timeout_ms() const {
@@ -39,18 +39,21 @@ gpendingpool::gpendingpool() :
 gpendingpool::~gpendingpool() {
 }
 
-gpendingpool::fd_item::fd_item(status_t _status, socket_t _socket) : 
-    status(_status), socket(_socket), 
-    last_active(std::chrono::system_clock::now()), enter_queue_time() {
+gpendingpool::fd_item::fd_item(socket_t _socket) : 
+    socket(_socket), connected_time(std::chrono::system_clock::now()), enter_queue_time() {
 
 }
 
 gpendingpool::fd_item & gpendingpool::fd_item::operator = (const fd_item & o) {
-    status = o.status; 
     socket = o.socket;
-    last_active = o.last_active;
+    connected_time = o.connected_time;
     enter_queue_time = o.enter_queue_time;
     return *this;
+}
+
+gpendingpool::milliseconds gpendingpool::fd_item::pending_time_ms() {
+    auto wait_time = std::chrono::system_clock::now() - connected_time;
+    return std::chrono::duration_cast<std::chrono::milliseconds>(wait_time).count();
 }
 
 int gpendingpool::close_wrap(fd_t fd) {
@@ -200,133 +203,113 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len) {
 }
 
 void gpendingpool::listen_thread_process() {
-    TRACE("[gpendingpool] listen thread start.%s", "");
+    TRACE("[gpendingpool] listen thread start.", "");
     fd_set fdset;
     timeval select_timeout = {
         get_select_timeout_ms() / 1000, 
         get_select_timeout_ms() * 1000 % 1000000
     };
     sockaddr saddr;
-    socklen_t addr_len = sizeof(struct sockaddr);
-    int accept_fd = -1;
+    socklen_t addr_len = sizeof(sockaddr);
 
     while(!is_exit) {
         FD_ZERO(&fdset);
+        // 1.set listen_fd
         if (listen_fd != -1) {
             FD_SET(listen_fd, &fdset);
         };
-        int max_fd = std::max(mask_item(fdset), listen_fd) + 1;
-        TRACE("[gpendingpool] max_fd:%d", max_fd);
-        auto select_res = select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout);
-        if (select_res < 0) {
+        // 2.set other fd && get max_fd
+        fd_t max_fd = std::max(mask_normal_fd(fdset), listen_fd) + 1;
+        if (auto select_res = select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout); select_res < 0) {
             FATAL("[gpendingpool] select error: %d", errno);
         } else if (select_res == 0) {
-            TRACE("[gpendingpool] fd size: %u", fd_items.size());
+            drop_timeout_fd();
         } else if (select_res > 0) {
+            // 1.check listen_fd
             if (listen_fd != -1 && FD_ISSET(listen_fd, &fdset)) {
-                char ipstr[INET_ADDRSTRLEN];
-                if ((accept_fd = accept_wrap(listen_fd, &saddr, &addr_len)) > 0) {
-                    TRACE("[gpendingpool] accept a new fd: %d", accept_fd);
+                if (fd_t accept_fd = accept_wrap(listen_fd, &saddr, &addr_len); accept_fd > 0) {
+                    TRACE("[gpendingpool] accept a new fd: [%d]", accept_fd);
                     int ret_sum = 0;
                     int on = 1;
-#ifdef TCP_NODELAY
+                    #ifdef TCP_NODELAY
                     ret_sum += setsockopt(accept_fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(int));
-#endif
-#ifdef TCP_QUICKACK
+                    #endif
+                    #ifdef TCP_QUICKACK
                     ret_sum += setsockopt(accept_fd, IPPROTO_TCP, TCP_QUICKACK, &on, sizeof(int));
-#endif
+                    #endif
                     if (ret_sum != 0) { 
                         FATAL("[gpendingpool] set socket option error[ret_sum:%d]", ret_sum);
                     }
-                    const char * ip_address = get_ip(accept_fd, ipstr, INET_ADDRSTRLEN);
-                    if (!insert_item(accept_fd)) {
-                        close_wrap(accept_fd);
+                    if (insert_normal_fd(accept_fd)) {
+                        char ipstr[INET_ADDRSTRLEN];
+                        auto ip_address = get_ip(accept_fd, ipstr, INET_ADDRSTRLEN);
+                        INFO("[gpendingpool] accept connect from [%d][%s].", accept_fd, ip_address);
                     } else {
-                        INFO("[gpendingpool] accepconnectt  from %s.", ip_address);
+                        close_wrap(accept_fd);
                     }
                 } else {
                     WARNING("[gpendingpool] accept request from UI error! ret=%d", accept_fd);
-                    continue;
                 }
             }
-            check_item(fdset);
+            // 2.check other fd
+            check_normal_fd(fdset);
         }
     }
 }
 
-
-bool gpendingpool::insert_item(int socket) {
+bool gpendingpool::insert_normal_fd(socket_t socket) {
     // Insert a accept fd 
-    auto res = fd_items.insert(std::make_pair(socket, fd_item(fd_item::status_t::READY, socket)));
+    auto res = fd_items.insert(std::make_pair(socket, fd_item(socket)));
     if (res.second) {
-        TRACE("[gpendingpool] insert_item succeed: fd[%d].", socket);
+        TRACE("[gpendingpool] insert_normal_fd [%d] succeed.", socket);
         return true;
     }
-    FATAL("[gpendingpool] insert_item fail: fd[%d] already exists.", socket);
-    return true;
+    FATAL("[gpendingpool] insert_normal_fd [%d] fail: already exists.", socket);
+    return false;
 }
 
-int gpendingpool::mask_item(fd_set & pfs) {
+int gpendingpool::mask_normal_fd(fd_set & pfs) {
     int max_fd = 0;
-    int ready_cnt = 0;
-    int busy_cnt = 0;
     std::for_each(fd_items.begin(), fd_items.end(),
-        [&pfs, &max_fd, &ready_cnt, &busy_cnt](auto & fd){
-            switch(fd.second.status)
-            {
-            case fd_item::status_t::READY:
+        [&pfs, &max_fd](auto & fd){
                 FD_SET(fd.first, &pfs);
                 max_fd = std::max(max_fd, fd.first);
-                ready_cnt++; 
-            break;
-            case fd_item::status_t::BUSY:
-                busy_cnt++;
-            break;
-            default:
-            break;
-            }
     });
     return max_fd; 
 }
 
-bool gpendingpool::reset_item(int socket, bool bKeepAlive) {
-    auto iter = fd_items.find(socket);
-    if (iter == fd_items.end()) {
-        return false;
-    } 
-    if (!bKeepAlive) {
+bool gpendingpool::drop_normal_fd(int socket) {
+    if (auto iter = fd_items.find(socket); iter != fd_items.end()) {
         fd_items.erase(socket);
         close_wrap(socket);
-    } else {
-        if (iter->second.status == fd_item::status_t::BUSY) {
-            iter->second.status = fd_item::status_t::READY;
-        }
-    }
-    return true;
+        return true;
+    } 
+    return false;
 }
 
-void gpendingpool::check_item(fd_set & pfs) {
-    std::for_each(fd_items.begin(), fd_items.end(), [this, &pfs](auto & fd) {
-        switch (fd.second.status)
-        {
-        case fd_item::status_t::BUSY:
-            fd.second.last_active = std::chrono::system_clock::now();
-        break;
-        case fd_item::status_t::READY:
-            if (FD_ISSET(fd.first, &pfs)) {
-                if (ready_queue_push(fd.first) < 0) {
-                    reset_item(fd.first, false);
-                } else {
-                    auto td = std::chrono::system_clock::now() - fd.second.last_active;
-                    auto ms_cnt = std::chrono::duration_cast<std::chrono::milliseconds>(td).count();
-                    if (ms_cnt > get_alive_timeout_ms()) {
-                        WARNING("[gpendingpool] socket %d[%u] timeout[%u]", fd.first, ms_cnt, get_alive_timeout_ms());
-                        reset_item(fd.first, false);
-                    }
-                }
+void gpendingpool::drop_timeout_fd() {
+    std::for_each(fd_items.begin(), fd_items.end(), [this](auto& fd) {
+        if (auto pending_time = fd.second.pending_time_ms(); pending_time > get_alive_timeout_ms()) {
+            TRACE("[gpendingpool] [select timeout check] socket %d timeout[%u > %u]", 
+                fd.first,  pending_time, get_alive_timeout_ms());
+            drop_normal_fd(fd.first);
+        }
+    });
+}
+
+void gpendingpool::check_normal_fd(fd_set & pfs) {
+    std::for_each(fd_items.begin(), fd_items.end(), [this, &pfs](auto& fd) {
+        if (FD_ISSET(fd.first, &pfs)) {
+            TRACE("[gpendingpool] check_normal_fd [%d] is set", fd.first);
+            if (ready_queue_push(fd.first) < 0) {
+                drop_normal_fd(fd.first);
+            } 
+        } else {
+            if (auto pending_time = fd.second.pending_time_ms(); pending_time > get_alive_timeout_ms()) {
+                TRACE("[gpendingpool] socket %d timeout[%u > %u]", 
+                    fd.first,  pending_time, get_alive_timeout_ms());
+                drop_normal_fd(fd.first);
             }
-        break;
-        default:break;
         }
     });
 }
@@ -336,14 +319,12 @@ bool gpendingpool::ready_queue_push(int socket) {
     auto iter = fd_items.find(socket);
     if (iter == fd_items.end())
         return false;
-    iter->second.last_active = std::chrono::system_clock::now();
     iter->second.enter_queue_time = std::chrono::system_clock::now();
 
     if (ready_queue.size() >= get_max_ready_queue_len()) {
         WARNING("[gpendingpool] Buffer overflow: %u", get_max_ready_queue_len());
         return false;
     } else {
-        iter->second.status = fd_item::status_t::BUSY;
         ready_queue.push(iter->first);
         cond_var.notify_one();
         TRACE("[gpendingpool] Ready %u sockets: handle %d, signal sent.", 
@@ -361,10 +342,14 @@ gpendingpool::ready_socket_opt_t gpendingpool::ready_queue_pop(const std::chrono
     ready_queue.pop();
     auto iter = fd_items.find(socket);
     if (iter != fd_items.end()) {
-        iter->second.status = fd_item::status_t::BUSY;
-        auto wait_time = std::chrono::system_clock::now() - iter->second.enter_queue_time;
-        unsigned int ms_cnt = std::chrono::duration_cast<std::chrono::milliseconds>(wait_time).count();
-        return std::make_pair(socket, ms_cnt);
+        if (auto pending_time = iter->second.pending_time_ms(); pending_time > get_alive_timeout_ms()) {
+            drop_normal_fd(socket);
+            WARNING("[gpendingpool] socket[%d] time out when ready_queue_pop[%u > %u]", 
+                socket, pending_time, get_alive_timeout_ms());
+        } else {
+            fd_items.erase(iter);
+            return std::make_pair(socket, iter->second.connected_time);
+        }
     } 
     return std::nullopt;
 }

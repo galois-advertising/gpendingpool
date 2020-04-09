@@ -1,6 +1,7 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <sstream>
 #include "gpendingpool.h"
 #include "log.h"
 using namespace std::chrono_literals;
@@ -14,11 +15,11 @@ int main()
         auto res = pdp.ready_queue_pop(5s);
         if (res) {
             galois::gpendingpool::socket_t socket;
-            galois::gpendingpool::milliseconds wait_time;
-            std::tie(socket, wait_time) = res.value();
-            INFO("socket:[%d] waited for %u", socket, wait_time);
+            galois::gpendingpool::time_point_t connected_time;
+            std::tie(socket, connected_time) = res.value();
+            INFO("socket:[%d] poped", socket);
         } else {
-            INFO("Time out...", "");
+            //INFO("Time out...", "");
         }
     }
     pdp.stop();
