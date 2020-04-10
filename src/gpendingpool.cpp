@@ -12,6 +12,18 @@
 #include "log.h"
 
 namespace galois {
+
+
+template <typename T>
+class increase_guard final {
+    T& iter;
+    bool& need_increase;
+public:
+    increase_guard(T& _iter, bool& _need_increase) : 
+        iter(_iter), need_increase(_need_increase) {}
+    ~increase_guard(){if (need_increase) {++iter;};};
+};
+
 unsigned int gpendingpool::get_listen_port() const {
     return 8709;
 }
@@ -24,8 +36,12 @@ int gpendingpool::get_alive_timeout_ms() const {
     return 10096;
 }
 
+int gpendingpool::get_queuing_timeout_ms() const {
+    return 20000;
+}
+
 int gpendingpool::get_select_timeout_ms() const {
-    return 1024;
+    return 2048;
 }
 
 size_t gpendingpool::get_max_ready_queue_len() const {
@@ -40,8 +56,8 @@ gpendingpool::~gpendingpool() {
 }
 
 gpendingpool::fd_item::fd_item(socket_t _socket) : 
-    socket(_socket), connected_time(std::chrono::system_clock::now()), enter_queue_time() {
-
+    status(gpendingpool::fd_item::status_t::CONNECTED), socket(_socket), 
+    connected_time(std::chrono::system_clock::now()), enter_queue_time() {
 }
 
 gpendingpool::fd_item & gpendingpool::fd_item::operator = (const fd_item & o) {
@@ -51,8 +67,13 @@ gpendingpool::fd_item & gpendingpool::fd_item::operator = (const fd_item & o) {
     return *this;
 }
 
-gpendingpool::milliseconds gpendingpool::fd_item::pending_time_ms() {
+gpendingpool::milliseconds gpendingpool::fd_item::alive_time_ms() {
     auto wait_time = std::chrono::system_clock::now() - connected_time;
+    return std::chrono::duration_cast<std::chrono::milliseconds>(wait_time).count();
+}
+
+gpendingpool::milliseconds gpendingpool::fd_item::queuing_time_ms() {
+    auto wait_time = std::chrono::system_clock::now() - enter_queue_time;
     return std::chrono::duration_cast<std::chrono::milliseconds>(wait_time).count();
 }
 
@@ -220,11 +241,13 @@ void gpendingpool::listen_thread_process() {
         };
         // 2.set other fd && get max_fd
         fd_t max_fd = std::max(mask_normal_fd(fdset), listen_fd) + 1;
+        TRACE("[gpendingpool] max_fd [%d].", max_fd);
         if (auto select_res = select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout); select_res < 0) {
             FATAL("[gpendingpool] select error: %d", errno);
         } else if (select_res == 0) {
-            drop_timeout_fd();
+            drop_connected_timeout_fd();
         } else if (select_res > 0) {
+             TRACE("[gpendingpool] select_res > 0.", "");
             // 1.check listen_fd
             if (listen_fd != -1 && FD_ISSET(listen_fd, &fdset)) {
                 if (fd_t accept_fd = accept_wrap(listen_fd, &saddr, &addr_len); accept_fd > 0) {
@@ -259,7 +282,7 @@ void gpendingpool::listen_thread_process() {
 
 bool gpendingpool::insert_normal_fd(socket_t socket) {
     // Insert a accept fd 
-    auto res = fd_items.insert(std::make_pair(socket, fd_item(socket)));
+    auto res = connected_fds.insert(std::make_pair(socket, fd_item(socket)));
     if (res.second) {
         TRACE("[gpendingpool] insert_normal_fd [%d] succeed.", socket);
         return true;
@@ -270,54 +293,73 @@ bool gpendingpool::insert_normal_fd(socket_t socket) {
 
 int gpendingpool::mask_normal_fd(fd_set & pfs) {
     int max_fd = 0;
-    std::for_each(fd_items.begin(), fd_items.end(),
+    std::for_each(connected_fds.begin(), connected_fds.end(),
         [&pfs, &max_fd](auto & fd){
+            if (fd.second.status == gpendingpool::fd_item::status_t::CONNECTED) {
                 FD_SET(fd.first, &pfs);
                 max_fd = std::max(max_fd, fd.first);
+            }
     });
     return max_fd; 
 }
 
 bool gpendingpool::drop_normal_fd(int socket) {
-    if (auto iter = fd_items.find(socket); iter != fd_items.end()) {
-        fd_items.erase(socket);
+    if (auto iter = connected_fds.find(socket); iter != connected_fds.end()) {
+        connected_fds.erase(socket);
         close_wrap(socket);
+        TRACE("[gpendingpool] drop_normal_fd[%d]", socket);
         return true;
     } 
     return false;
 }
 
-void gpendingpool::drop_timeout_fd() {
-    std::for_each(fd_items.begin(), fd_items.end(), [this](auto& fd) {
-        if (auto pending_time = fd.second.pending_time_ms(); pending_time > get_alive_timeout_ms()) {
-            TRACE("[gpendingpool] [select timeout check] socket %d timeout[%u > %u]", 
-                fd.first,  pending_time, get_alive_timeout_ms());
-            drop_normal_fd(fd.first);
+void gpendingpool::drop_connected_timeout_fd() {
+    TRACE("[gpendingpool]{drop_connected_timeout_fd} >>>>>>>>>>>", "");
+    for (auto pos = connected_fds.begin(); pos != connected_fds.end();) {
+        bool need_increase = true;
+        increase_guard guard(pos, need_increase);
+        if (pos->second.status == fd_item::status_t::CONNECTED) {
+            if (auto pending_time = pos->second.alive_time_ms(); pending_time > get_alive_timeout_ms()) {
+                TRACE("[gpendingpool]{drop_connected_timeout_fd}[%d] timeout [%u] > [%u]", 
+                    pos->first, pending_time, get_alive_timeout_ms());
+                close_wrap(pos->first);
+                connected_fds.erase(pos++);
+                need_increase = false;
+            } else {
+                TRACE("[gpendingpool]{drop_connected_timeout_fd}[%d] continue [%u] <= [%u]", 
+                    pos->first, pending_time, get_alive_timeout_ms());
+            } 
+        } else {
+            TRACE("[gpendingpool]{drop_connected_timeout_fd}[%d] queuing:ignored", pos->first);
         }
-    });
+    };
+    TRACE("[gpendingpool]{drop_connected_timeout_fd} <<<<<<<<<<<", "");
 }
 
 void gpendingpool::check_normal_fd(fd_set & pfs) {
-    std::for_each(fd_items.begin(), fd_items.end(), [this, &pfs](auto& fd) {
-        if (FD_ISSET(fd.first, &pfs)) {
-            TRACE("[gpendingpool] check_normal_fd [%d] is set", fd.first);
-            if (ready_queue_push(fd.first) < 0) {
-                drop_normal_fd(fd.first);
+    TRACE("[gpendingpool] check_normal_fd >>>>>>>>>>", "");
+    for (auto pos = connected_fds.begin(); pos != connected_fds.end();) {
+        bool need_increase = true;
+        increase_guard guard(pos, need_increase);
+        if (FD_ISSET(pos->first, &pfs)) {
+            TRACE("[gpendingpool] check_normal_fd [%d] is set", pos->first);
+            if (pos->second.status != fd_item::status_t::queuing) {
+                TRACE("[gpendingpool] ready_queue_push", "");
+                if (!ready_queue_push(pos->first)) {
+                    close_wrap(pos->first);
+                    connected_fds.erase(pos++);
+                    need_increase = false;
+                } 
             } 
-        } else {
-            if (auto pending_time = fd.second.pending_time_ms(); pending_time > get_alive_timeout_ms()) {
-                TRACE("[gpendingpool] socket %d timeout[%u > %u]", 
-                    fd.first,  pending_time, get_alive_timeout_ms());
-                drop_normal_fd(fd.first);
-            }
-        }
-    });
+        } 
+    };
+    TRACE("[gpendingpool] check_normal_fd <<<<<<<<<<", "");
 }
 
 bool gpendingpool::ready_queue_push(int socket) {
     std::lock_guard<std::mutex> lk(mtx);
-    auto iter = fd_items.find(socket);
-    if (iter == fd_items.end())
+    auto iter = connected_fds.find(socket);
+    if (iter == connected_fds.end())
         return false;
     iter->second.enter_queue_time = std::chrono::system_clock::now();
 
@@ -325,6 +367,7 @@ bool gpendingpool::ready_queue_push(int socket) {
         WARNING("[gpendingpool] Buffer overflow: %u", get_max_ready_queue_len());
         return false;
     } else {
+        iter->second.status = fd_item::status_t::queuing;
         ready_queue.push(iter->first);
         cond_var.notify_one();
         TRACE("[gpendingpool] Ready %u sockets: handle %d, signal sent.", 
@@ -335,22 +378,26 @@ bool gpendingpool::ready_queue_push(int socket) {
 
 gpendingpool::ready_socket_opt_t gpendingpool::ready_queue_pop(const std::chrono::milliseconds& time_out) {
     std::unique_lock<std::mutex> lk(mtx);
-    if(!cond_var.wait_for(lk, time_out, [this]{return !this->ready_queue.empty();})) {
+    if (!cond_var.wait_for(lk, time_out, [this]{return !this->ready_queue.empty();})) {
         return std::nullopt;
     }
-    auto socket = ready_queue.front();
-    ready_queue.pop();
-    auto iter = fd_items.find(socket);
-    if (iter != fd_items.end()) {
-        if (auto pending_time = iter->second.pending_time_ms(); pending_time > get_alive_timeout_ms()) {
-            drop_normal_fd(socket);
-            WARNING("[gpendingpool] socket[%d] time out when ready_queue_pop[%u > %u]", 
-                socket, pending_time, get_alive_timeout_ms());
+    while (!ready_queue.empty()) {
+        auto socket = ready_queue.front();
+        ready_queue.pop();
+        if (auto iter = connected_fds.find(socket); iter != connected_fds.end()) {
+            if (auto queuing_time = iter->second.queuing_time_ms(); queuing_time > get_queuing_timeout_ms()) {
+                close_wrap(iter->first);
+                connected_fds.erase(iter);
+                WARNING("[gpendingpool]{ready_queue_pop}[%d] queuing time out [%u] >[%u]", 
+                    socket, queuing_time, get_queuing_timeout_ms());
+            } else {
+                connected_fds.erase(iter);
+                return std::make_pair(socket, iter->second.connected_time);
+            }
         } else {
-            fd_items.erase(iter);
-            return std::make_pair(socket, iter->second.connected_time);
-        }
-    } 
+            FATAL("[gpendingpool]{ready_queue_pop}[%d] should be here", iter->first);
+        } 
+    }
     return std::nullopt;
 }
 
