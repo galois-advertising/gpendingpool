@@ -77,48 +77,9 @@ gpendingpool::milliseconds gpendingpool::fd_item::queuing_time_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(wait_time).count();
 }
 
-int gpendingpool::close_wrap(fd_t fd) {
-    return close(fd);
-}
-
-int gpendingpool::listen_wrap(fd_t sockfd, int backlog) {
-    int val = listen(sockfd, backlog);
-    if (val == -1) {
-        FATAL("[gpendingpool] listen(%d,%d) call failed.error[%d] info is %s.", sockfd,
-            backlog, errno, strerror(errno));
-    }
-    return val;
-}
-
-int gpendingpool::setsockopt_wrap(fd_t sockfd, int level, int optname, 
-    const void *optval, socklen_t optlen) {
-    int val = setsockopt(sockfd, level, optname, optval, optlen);
-    if (val == -1) {
-        FATAL("[gpendingpool] setsockopt(%d,%d,%d) call failed.error[%d] info is %s.",
-                    sockfd, level, optname, errno, strerror(errno));
-    }
-    return val;
-}
-
-int gpendingpool::socket_wrap(int family, int type, int protocol) {
-    int val = socket(family, type, protocol);
-    if (val == -1) {
-        FATAL("[gpendingpool] socket(%d,%d,%d) call failed.error[%d] info is %s.",
-                    family, type, protocol, errno, strerror(errno));
-    }
-    return val;
-}
-
-int gpendingpool::bind_wrap(fd_t sockfd, const sockaddr* myaddr, socklen_t addrlen) {
-    int val = bind(sockfd, myaddr, addrlen);
-    if (val == -1) {
-        FATAL("[gpendingpool] bind(%d,<%d,%d,%u>,%d) call failed.error[%d] info is %s.",
-            sockfd, reinterpret_cast<const sockaddr_in*>(myaddr)->sin_family,
-            reinterpret_cast<const sockaddr_in*>(myaddr)->sin_port,
-            reinterpret_cast<const sockaddr_in*>(myaddr)->sin_addr.s_addr, addrlen, errno,
-            strerror(errno));
-    }
-    return val;
+void gpendingpool::close_listen_fd() {
+    galois::net::close_wrap(listen_fd);
+    listen_fd = -1;
 }
 
 gpendingpool::socket_opt_t gpendingpool::tcplisten(port_t port, int queue) {
@@ -126,78 +87,26 @@ gpendingpool::socket_opt_t gpendingpool::tcplisten(port_t port, int queue) {
     const int on = 1;
     struct sockaddr_in soin;
 
-    if ((listenfd = socket_wrap(PF_INET, SOCK_STREAM, 0)) < 0) {
+    if ((listenfd = galois::net::socket_wrap(PF_INET, SOCK_STREAM, 0)) < 0) {
         return std::nullopt;
     }
-    setsockopt_wrap(listenfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    galois::net::setsockopt_wrap(listenfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
     memset(&soin, 0, sizeof(soin));
     soin.sin_family = AF_INET;
     soin.sin_addr.s_addr = htonl(INADDR_ANY);
     soin.sin_port = htons((uint16_t)port);
-    if (bind_wrap(listenfd, (struct sockaddr *) &soin, sizeof(soin)) < 0) {
-        close_wrap(listenfd);
+    if (galois::net::bind_wrap(listenfd, (struct sockaddr *) &soin, sizeof(soin)) < 0) {
+        galois::net::close_wrap(listenfd);
         return std::nullopt;
     }
     if(queue <= 0) {
         queue = 5;
     }
-    if (listen_wrap(listenfd, queue) < 0) {
-        close_wrap(listenfd);
+    if (galois::net::listen_wrap(listenfd, queue) < 0) {
+        galois::net::close_wrap(listenfd);
         return std::nullopt;
     }
     return listenfd;
-}
-
-int gpendingpool::select_wrap(int nfds, fd_set * readfds, fd_set * writefds, fd_set * exceptfds, 
-    struct timeval * timeout) {
-    int val;
-again:
-    val = select(nfds, readfds, writefds, exceptfds, timeout);
-    if (val < 0) {
-        if (errno == EINTR) {
-            goto again;
-        }
-        FATAL("[gpendingpool] select() call error.error[%d] info is %s", errno,
-                    strerror(errno));
-    }
-    if (val == 0) {
-        errno = ETIMEDOUT;
-    }
-    return val;
-}
-
-int gpendingpool::accept_wrap(fd_t sockfd, struct sockaddr *sa, socklen_t * addrlen) {
-    int connfd = 0;
-again:
-    connfd = accept(sockfd, sa, addrlen);
-    if (connfd < 0) {
-#ifdef  EPROTO
-        if (errno == EPROTO || errno == ECONNABORTED) {
-#else
-        if (errno == ECONNABORTED) {
-#endif
-            goto again;
-        } else {
-            FATAL("[gpendingpool] accept(%d) call failed.error[%d] info is %s.", sockfd,
-                        errno, strerror(errno));
-            return -1;
-        }
-    }
-    return connfd;
-}
-
-void gpendingpool::close_listen_fd() {
-    close_wrap(listen_fd);
-    listen_fd = -1;
-}
-
-int gpendingpool::getpeername_wrap(fd_t sockfd, struct sockaddr *peeraddr, socklen_t * addrlen) {
-    int val = getpeername(sockfd, peeraddr, addrlen);
-    if (val == -1) {
-        FATAL("[gpendingpool] getpeername(%d) call failed.error[%d] info is %s.\n",
-            sockfd, errno, strerror(errno));
-    }
-    return val;
 }
 
 const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len) {
@@ -208,7 +117,7 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len) {
     sockaddr_in addr;
     socklen_t addr_len = sizeof(sockaddr_in);
     int ret;
-    ret = getpeername_wrap(fd, (sockaddr*)&addr, &addr_len);
+    ret = galois::net::getpeername_wrap(fd, (sockaddr*)&addr, &addr_len);
     if (ret < 0) {
         FATAL("[gpendingpool] getpeername failed, errno=%m", errno);
         return "";
@@ -242,7 +151,7 @@ void gpendingpool::listen_thread_process() {
         // 2.set other fd && get max_fd
         fd_t max_fd = std::max(mask_normal_fd(fdset), listen_fd) + 1;
         TRACE("[gpendingpool] max_fd [%d].", max_fd);
-        if (auto select_res = select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout); select_res < 0) {
+        if (auto select_res = galois::net::select_wrap(max_fd, &fdset, NULL, NULL, &select_timeout); select_res < 0) {
             FATAL("[gpendingpool] select error: %d", errno);
         } else if (select_res == 0) {
             drop_connected_timeout_fd();
@@ -250,7 +159,7 @@ void gpendingpool::listen_thread_process() {
              TRACE("[gpendingpool] select_res > 0.", "");
             // 1.check listen_fd
             if (listen_fd != -1 && FD_ISSET(listen_fd, &fdset)) {
-                if (fd_t accept_fd = accept_wrap(listen_fd, &saddr, &addr_len); accept_fd > 0) {
+                if (fd_t accept_fd = galois::net::accept_wrap(listen_fd, &saddr, &addr_len); accept_fd > 0) {
                     TRACE("[gpendingpool] accept a new fd: [%d]", accept_fd);
                     int ret_sum = 0;
                     int on = 1;
@@ -268,7 +177,7 @@ void gpendingpool::listen_thread_process() {
                         auto ip_address = get_ip(accept_fd, ipstr, INET_ADDRSTRLEN);
                         INFO("[gpendingpool] accept connect from [%d][%s].", accept_fd, ip_address);
                     } else {
-                        close_wrap(accept_fd);
+                        galois::net::close_wrap(accept_fd);
                     }
                 } else {
                     WARNING("[gpendingpool] accept request from UI error! ret=%d", accept_fd);
@@ -306,7 +215,7 @@ int gpendingpool::mask_normal_fd(fd_set & pfs) {
 bool gpendingpool::drop_normal_fd(int socket) {
     if (auto iter = connected_fds.find(socket); iter != connected_fds.end()) {
         connected_fds.erase(socket);
-        close_wrap(socket);
+        galois::net::close_wrap(socket);
         TRACE("[gpendingpool] drop_normal_fd[%d]", socket);
         return true;
     } 
@@ -322,7 +231,7 @@ void gpendingpool::drop_connected_timeout_fd() {
             if (auto pending_time = pos->second.alive_time_ms(); pending_time > get_alive_timeout_ms()) {
                 TRACE("[gpendingpool]{drop_connected_timeout_fd}[%d] timeout [%u] > [%u]", 
                     pos->first, pending_time, get_alive_timeout_ms());
-                close_wrap(pos->first);
+                galois::net::close_wrap(pos->first);
                 connected_fds.erase(pos++);
                 need_increase = false;
             } else {
@@ -346,7 +255,7 @@ void gpendingpool::check_normal_fd(fd_set & pfs) {
             if (pos->second.status != fd_item::status_t::queuing) {
                 TRACE("[gpendingpool] ready_queue_push", "");
                 if (!ready_queue_push(pos->first)) {
-                    close_wrap(pos->first);
+                    galois::net::close_wrap(pos->first);
                     connected_fds.erase(pos++);
                     need_increase = false;
                 } 
@@ -386,7 +295,7 @@ gpendingpool::ready_socket_opt_t gpendingpool::ready_queue_pop(const std::chrono
         ready_queue.pop();
         if (auto iter = connected_fds.find(socket); iter != connected_fds.end()) {
             if (auto queuing_time = iter->second.queuing_time_ms(); queuing_time > get_queuing_timeout_ms()) {
-                close_wrap(iter->first);
+                galois::net::close_wrap(iter->first);
                 connected_fds.erase(iter);
                 WARNING("[gpendingpool]{ready_queue_pop}[%d] queuing time out [%u] >[%u]", 
                     socket, queuing_time, get_queuing_timeout_ms());
