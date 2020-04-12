@@ -13,7 +13,6 @@
 
 namespace galois {
 
-
 template <typename T>
 class increase_guard final {
     T& iter;
@@ -232,7 +231,7 @@ void gpendingpool::drop_connected_timeout_fd() {
                 TRACE("[gpendingpool]{drop_connected_timeout_fd}[%d] timeout [%u] > [%u]", 
                     pos->first, pending_time, get_alive_timeout_ms());
                 galois::net::close_wrap(pos->first);
-                connected_fds.erase(pos++);
+                pos = connected_fds.erase(pos);
                 need_increase = false;
             } else {
                 TRACE("[gpendingpool]{drop_connected_timeout_fd}[%d] continue [%u] <= [%u]", 
@@ -252,11 +251,16 @@ void gpendingpool::check_normal_fd(fd_set & pfs) {
         increase_guard guard(pos, need_increase);
         if (FD_ISSET(pos->first, &pfs)) {
             TRACE("[gpendingpool] check_normal_fd [%d] is set", pos->first);
-            if (pos->second.status != fd_item::status_t::queuing) {
-                TRACE("[gpendingpool] ready_queue_push", "");
+            if (galois::net::test_fd_read_closed(pos->first)) {
+                TRACE("[gpendingpool][%d] is read closed", pos->first);
+                galois::net::close_wrap(pos->first);
+                pos = connected_fds.erase(pos);
+                need_increase = false;
+            } else if (pos->second.status != fd_item::status_t::queuing) {
+                TRACE("[gpendingpool][%d] ready_queue_push", pos->first);
                 if (!ready_queue_push(pos->first)) {
                     galois::net::close_wrap(pos->first);
-                    connected_fds.erase(pos++);
+                    pos = connected_fds.erase(pos);
                     need_increase = false;
                 } 
             } 
@@ -287,8 +291,9 @@ bool gpendingpool::ready_queue_push(int socket) {
 
 gpendingpool::ready_socket_opt_t gpendingpool::ready_queue_pop(const std::chrono::milliseconds& time_out) {
     std::unique_lock<std::mutex> lk(mtx);
+    gpendingpool::ready_socket_opt_t result = std::nullopt;
     if (!cond_var.wait_for(lk, time_out, [this]{return !this->ready_queue.empty();})) {
-        return std::nullopt;
+        return result;
     }
     while (!ready_queue.empty()) {
         auto socket = ready_queue.front();
@@ -296,18 +301,17 @@ gpendingpool::ready_socket_opt_t gpendingpool::ready_queue_pop(const std::chrono
         if (auto iter = connected_fds.find(socket); iter != connected_fds.end()) {
             if (auto queuing_time = iter->second.queuing_time_ms(); queuing_time > get_queuing_timeout_ms()) {
                 galois::net::close_wrap(iter->first);
-                connected_fds.erase(iter);
-                WARNING("[gpendingpool]{ready_queue_pop}[%d] queuing time out [%u] >[%u]", 
+                TRACE("[gpendingpool]{ready_queue_pop}[%d] queuing time out [%u] >[%u]", 
                     socket, queuing_time, get_queuing_timeout_ms());
             } else {
-                connected_fds.erase(iter);
-                return std::make_pair(socket, iter->second.connected_time);
+                result = std::make_pair(socket, iter->second.connected_time);
             }
+            connected_fds.erase(iter);
         } else {
-            FATAL("[gpendingpool]{ready_queue_pop}[%d] should be here", iter->first);
+            FATAL("[gpendingpool]{ready_queue_pop}[%d] should not be here", iter->first);
         } 
     }
-    return std::nullopt;
+    return result;
 }
 
 bool gpendingpool::start() {

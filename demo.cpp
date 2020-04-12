@@ -20,26 +20,10 @@ public:
 };
 int main()
 {
-
-    std::unordered_map<int, int> m{{1, 11}, {2, 22}, {3, 33}, {4,44}, {5,55}, {6,66}};
-    for (auto res = m.begin(); res != m.end();) {
-        bool increase = true;
-        increase_guard guard(res, increase);
-        if (res->first % 2 == 0) {
-            m.erase(res++);
-            increase = false;
-        }
-    };
-    for (auto i: m) {
-        std::cout<<i.first<<":"<<i.second<<std::endl;
-    }
-    //return 0;
-
-
     galois::gpendingpool pdp;
     pdp.start();
     while (true) {
-        auto res = pdp.ready_queue_pop(1s);
+        auto res = pdp.ready_queue_pop(5s);
         if (res) {
             galois::gpendingpool::socket_t socket;
             galois::gpendingpool::time_point_t connected_time;
@@ -48,7 +32,7 @@ int main()
         } else {
             INFO("Time out...", "");
         }
-        std::this_thread::sleep_for(std::chrono::seconds(50));
+        std::this_thread::sleep_for(std::chrono::seconds(20));
     }
     pdp.stop();
     std::cout<<"exit"<<std::endl;
