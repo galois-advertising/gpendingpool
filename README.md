@@ -1,11 +1,11 @@
 
 ![logo](./galois-tcp-pending-pool.png)
 
-# what's gpendingpool 
+# 1.what's gpendingpool 
 
 gpendingpool是一个TCP连接池通用库，主要目的是接管服务底层TCP连接管理功能，自动对所有连接进行排队控制、超时关闭，异常过滤等，从而向下游交付可用的连接。
 
-# 1.why gpendingpool
+# 2.why gpendingpool
 
 众所周知，服务端的网络模块经常需要通过IO多路复用来同时处理多个连接请求，多路复用本身使用细节繁琐容易出错，且由于外部各种原因，难免发生下面几种情况：
 
@@ -24,7 +24,7 @@ gpendingpool是一个TCP连接池通用库，主要目的是接管服务底层TC
 * 无论连接是否readable，在交付下游时统一做连接可用性检测，主动关闭“读半边关闭”的连接，避免不可用的连接交付给下游。
 
 
-# 2.quick start
+# 3.quick start
 
 ## download
 
@@ -60,7 +60,7 @@ $ nc 127.0.0.1 8709
 //send something or ctrl-c to kill connection
 ```
 
-# 3.integration into your project
+# 4.integration into your project
 
 在使用cmake构建的项目中，可以很方便的将gpendingpool集成为项目的一个模块。
 
@@ -108,7 +108,7 @@ int main()
 TARGET_LINK_LIBRARIES(your_target common gpendingpool)
 ```
 
-# 4.api
+# 5.api
 
 gpendingpool通过override来获取配置参数，所以在使用gpendingpool之前，需要先重新实现配置接口，从而自定义配置。
 
@@ -125,33 +125,20 @@ public:
  ```
 gpendingpool有6个参数
 
-* get_listen_port
+* get_listen_port: 监听端口
 
-  监听端口
+* get_queue_len: 内核应为相应套接字排队的最大连接个数,listen函数的第二个参数
 
-* get_queue_len
+* get_alive_timeout_ms: 连接在readable之前的最大存活时间
 
-  内核应为相应套接字排队的最大连接个数,listen函数的第二个参数
+* get_queuing_timeout_ms: 连接在排队等待时的最大存活时间
 
-* get_alive_timeout_ms
+* get_select_timeout_ms: select函数超时时间，每当select因为超时而被唤醒，就会依此检查unreadable的连接是否超时，并且删除超时连接。
 
-  连接在readable之前的最大存活时间
-
-* get_queuing_timeout_ms
-
-  连接在排队等待时的最大存活时间
-
-* get_select_timeout_ms
-
-  select函数超时时间，每当select因为超时而被唤醒，就会依此检查unreadable的连接是否超时，并且删除超时连接。
-
-* get_max_ready_queue_len
-
-  系统readable连接队列的最大长度
+* get_max_ready_queue_len: 系统readable连接队列的最大长度
 
 
-
-gpendingpool 最关键的用户接口有三个start\stop\ready_queue_pop。
+gpendingpool最关键的用户接口有三个start、stop、ready_queue_pop。
 
 - start：启动监听
 - stop：停止监听
