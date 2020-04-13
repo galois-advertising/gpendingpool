@@ -8,22 +8,23 @@
 #include "log.h"
 using namespace std::chrono_literals;
 
-
-template <typename T>
-class increase_guard final {
-    T& iter;
-    bool& need_increase;
+class my_pendingpool : public galois::gpendingpool {
 public:
-    increase_guard(T& _iter, bool& _need_increase) : 
-        iter(_iter), need_increase(_need_increase) {}
-    ~increase_guard(){if (need_increase) {++iter;};};
+    unsigned int get_listen_port() const { return 8909;}
+    unsigned int get_queue_len() const { return 5; }
+    int get_alive_timeout_ms() const { return 4000; }
+    int get_queuing_timeout_ms() const { return 4000; }
+    int get_select_timeout_ms() const { return 1000; }
+    size_t get_max_ready_queue_len() const { return 128; }
 };
+
 int main()
 {
-    galois::gpendingpool pdp;
+    my_pendingpool pdp;
     pdp.start();
-    while (true) {
-        auto res = pdp.ready_queue_pop(5s);
+    int cnt = 3;
+    while (cnt--) {
+        auto res = pdp.ready_queue_pop(3s);
         if (res) {
             galois::gpendingpool::socket_t socket;
             galois::gpendingpool::time_point_t connected_time;
@@ -32,9 +33,9 @@ int main()
         } else {
             INFO("Time out...", "");
         }
-        std::this_thread::sleep_for(std::chrono::seconds(20));
+        std::this_thread::sleep_for(std::chrono::seconds(10));
     }
     pdp.stop();
-    std::cout<<"exit"<<std::endl;
+    INFO("exit", "");
     return 0;
 }

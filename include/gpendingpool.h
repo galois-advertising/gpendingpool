@@ -36,7 +36,6 @@ public:
 
     bool start();
     bool stop();
-    void close_listen_fd();
     ready_socket_opt_t ready_queue_pop(const std::chrono::milliseconds& time_out);
 protected:
     virtual unsigned int get_listen_port() const;
@@ -48,6 +47,7 @@ protected:
 
 private:
     socket_opt_t tcplisten(port_t, int queue);
+    void close_listen_fd();
 private:
     struct fd_item {
         enum class status_t {CONNECTED, queuing};

@@ -132,7 +132,7 @@ const char * gpendingpool::get_ip(int fd, char* ipstr, size_t len) {
 }
 
 void gpendingpool::listen_thread_process() {
-    TRACE("[gpendingpool] listen thread start.", "");
+    WARNING("[gpendingpool] listen thread start.", "");
     fd_set fdset;
     timeval select_timeout = {
         get_select_timeout_ms() / 1000, 
@@ -186,6 +186,8 @@ void gpendingpool::listen_thread_process() {
             check_normal_fd(fdset);
         }
     }
+    close_listen_fd();
+    TRACE("[gpendingpool] is_exit == true, listen fd closed", "");
 }
 
 bool gpendingpool::insert_normal_fd(socket_t socket) {
